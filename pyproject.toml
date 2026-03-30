@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "promptgate"
+version = "0.1.0"
+description = "LLMアプリケーション向けプロンプトインジェクション検出ライブラリ"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "YUICHI KANEKO" }]
+requires-python = ">=3.8"
+dependencies = ["pyyaml"]
+
+[project.optional-dependencies]
+embedding = ["sentence-transformers"]
+llm = ["anthropic"]
+dev = ["pytest", "pytest-cov", "mypy", "ruff"]
+all = ["sentence-transformers", "anthropic"]
+
+[tool.setuptools.packages.find]
+include = ["promptgate*"]
+
+[tool.setuptools.package-data]
+promptgate = ["patterns/*.yaml"]
+
+[tool.mypy]
+python_version = "3.8"
+strict = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
