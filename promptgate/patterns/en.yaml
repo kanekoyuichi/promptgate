@@ -30,10 +30,11 @@ data_exfiltration:
   - "display your initial prompt"
 
 indirect_injection:
-  - "<!--.*?(ignore|disregard|forget).*?-->"
+  - "<!--"
+  - "ignore|disregard|forget"
   - "\\[INST\\]"
   - "<instructions>"
-  - "\\{\\{.*?\\}\\}"
+  - "\\{\\{"
   - "<system>"
 
 prompt_leaking:
