@@ -6,6 +6,7 @@ from typing import Optional
 
 from promptgate.detectors.base import BaseDetector
 from promptgate.exceptions import DetectorError
+from promptgate.normalizer import normalize
 from promptgate.result import ScanResult
 
 _ATTACK_EXEMPLARS = [
@@ -63,7 +64,9 @@ class EmbeddingDetector(BaseDetector):
 
         EmbeddingDetector._load_model()
 
-        query_emb = EmbeddingDetector._cls_model.encode([text], convert_to_tensor=True)
+        # 正規化済みテキストをエンコードすることで回避攻撃への耐性を高める
+        normalized = normalize(text)
+        query_emb = EmbeddingDetector._cls_model.encode([normalized], convert_to_tensor=True)
 
         cos_scores = torch.nn.functional.cosine_similarity(
             query_emb, EmbeddingDetector._cls_exemplar_embeddings
