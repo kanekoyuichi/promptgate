@@ -10,6 +10,7 @@ import yaml
 
 from promptgate.detectors.base import BaseDetector
 from promptgate.exceptions import DetectorError
+from promptgate.normalizer import normalize
 from promptgate.result import ScanResult
 
 logger = logging.getLogger(__name__)
@@ -24,14 +25,14 @@ _SEVERITY_SCORE: dict[str, float] = {
     "prompt_leaking": 0.7,
 }
 
-# Aligned with core.py _aggregate threshold_map
+# core.py の _aggregate threshold_map と統一
 _SENSITIVITY_THRESHOLD: dict[str, float] = {
     "low": 0.8,
     "medium": 0.5,
     "high": 0.3,
 }
 
-# Whitelist only suppresses results below this score (not high-confidence attacks)
+# ホワイトリストはこのスコア未満の結果にのみ適用する（高確信度攻撃は免除しない）
 _WHITELIST_MAX_BYPASSABLE_SCORE: float = 0.8
 
 _SEVERITY_TO_SCORE: dict[str, float] = {
@@ -39,6 +40,15 @@ _SEVERITY_TO_SCORE: dict[str, float] = {
     "medium": 0.7,
     "high": 0.9,
 }
+
+
+def _is_safe_pattern(compiled: re.Pattern[str]) -> bool:
+    """コンパイル済みパターンが空文字列にマッチしないことを確認する。
+
+    空文字列にマッチするパターン（例: "", ".*", "a*", "a?"）は
+    あらゆるテキストにヒットするため、安全性評価が無効化される。
+    """
+    return compiled.search("") is None
 
 
 def _load_patterns(language: str) -> dict[str, list[str]]:
@@ -58,8 +68,34 @@ def _load_patterns(language: str) -> dict[str, list[str]]:
         if not isinstance(data, dict):
             raise DetectorError(f"パターンファイルの形式が不正です: {path}")
         for threat, patterns in data.items():
-            if isinstance(patterns, list):
-                merged.setdefault(threat, []).extend(patterns)
+            if not isinstance(patterns, list):
+                continue
+            for p in patterns:
+                if not isinstance(p, str) or not p.strip():
+                    logger.warning(
+                        "空または不正なパターンをスキップします: threat=%s, value=%r",
+                        threat,
+                        p,
+                    )
+                    continue
+                try:
+                    compiled = re.compile(p, re.IGNORECASE)
+                except re.error as e:
+                    logger.warning(
+                        "パターンのコンパイルに失敗しました: threat=%s, pattern=%r, error=%s",
+                        threat,
+                        p,
+                        e,
+                    )
+                    continue
+                if not _is_safe_pattern(compiled):
+                    logger.warning(
+                        "空文字列にマッチするパターンを拒否しました: threat=%s, pattern=%r",
+                        threat,
+                        p,
+                    )
+                    continue
+                merged.setdefault(threat, []).append(p)
     return merged
 
 
@@ -94,7 +130,7 @@ class RuleBasedDetector(BaseDetector):
             compiled_list: list[re.Pattern[str]] = []
             for pattern in patterns:
                 try:
-                    compiled_list.append(re.compile(pattern, re.IGNORECASE))
+                    c = re.compile(pattern, re.IGNORECASE)
                 except re.error as e:
                     logger.warning(
                         "パターンのコンパイルに失敗しました (threat=%s, pattern=%r): %s",
@@ -102,6 +138,15 @@ class RuleBasedDetector(BaseDetector):
                         pattern,
                         e,
                     )
+                    continue
+                if not _is_safe_pattern(c):
+                    logger.warning(
+                        "空文字列にマッチするパターンをスキップします: threat=%s, pattern=%r",
+                        threat,
+                        pattern,
+                    )
+                    continue
+                compiled_list.append(c)
             self._compiled[threat] = compiled_list
 
     def add_rule(self, name: str, pattern: str, severity: str = "medium") -> None:
@@ -109,7 +154,6 @@ class RuleBasedDetector(BaseDetector):
         self._custom_scores[name] = _SEVERITY_TO_SCORE.get(severity, 0.7)
         try:
             compiled = re.compile(pattern, re.IGNORECASE)
-            self._compiled.setdefault(name, []).append(compiled)
         except re.error as e:
             logger.warning(
                 "追加ルールのコンパイルに失敗しました (name=%s, pattern=%r): %s",
@@ -117,20 +161,30 @@ class RuleBasedDetector(BaseDetector):
                 pattern,
                 e,
             )
+            return
+        if not _is_safe_pattern(compiled):
+            logger.warning(
+                "空文字列にマッチするパターンを拒否しました (name=%s, pattern=%r)",
+                name,
+                pattern,
+            )
+            return
+        self._compiled.setdefault(name, []).append(compiled)
 
     def scan(self, text: str) -> ScanResult:
         start = time.monotonic()
 
+        # Fix B: 正規化済みテキストに対してパターンマッチを行う
+        # NFKC変換・ゼロ幅文字除去・区切りノイズ除去により回避攻撃を無効化する
+        normalized = normalize(text)
+
         detected_threats: list[str] = []
-        max_score = 0.0
 
         for threat, compiled_patterns in self._compiled.items():
             for cpat in compiled_patterns:
                 try:
-                    if cpat.search(text):
+                    if cpat.search(normalized):
                         detected_threats.append(threat)
-                        score = self._custom_scores.get(threat) or _SEVERITY_SCORE.get(threat, 0.7)
-                        max_score = max(max_score, score)
                         break
                 except re.error as e:
                     logger.warning(
@@ -139,9 +193,23 @@ class RuleBasedDetector(BaseDetector):
                         e,
                     )
 
-        # Whitelist: suppress result only if not a high-confidence attack
-        whitelist_matched = any(wp.search(text) for wp in self._whitelist)
-        if whitelist_matched and max_score < _WHITELIST_MAX_BYPASSABLE_SCORE:
+        # Fix E: 複合スコアリング（最大スコア + 脅威カテゴリ多様性ボーナス）
+        if detected_threats:
+            detected_unique = list(set(detected_threats))
+            base_score = max(
+                self._custom_scores.get(t) or _SEVERITY_SCORE.get(t, 0.7)
+                for t in detected_unique
+            )
+            # 複数の脅威カテゴリが検出された場合、攻撃の複雑さを加味してスコアを加算
+            diversity_bonus = min(0.05 * (len(detected_unique) - 1), 0.1)
+            final_score = min(base_score + diversity_bonus, 1.0)
+        else:
+            detected_unique = []
+            final_score = 0.0
+
+        # ホワイトリスト: スキャン後チェック（高確信度攻撃は免除しない）
+        whitelist_matched = any(wp.search(normalized) for wp in self._whitelist)
+        if whitelist_matched and final_score < _WHITELIST_MAX_BYPASSABLE_SCORE:
             return ScanResult(
                 is_safe=True,
                 risk_score=0.0,
@@ -151,16 +219,17 @@ class RuleBasedDetector(BaseDetector):
                 latency_ms=(time.monotonic() - start) * 1000,
             )
 
-        is_safe = max_score < self._threshold
-        if detected_threats:
-            explanation = f"以下の脅威が検出されました: {', '.join(set(detected_threats))}"
-        else:
-            explanation = "脅威は検出されませんでした。"
+        is_safe = final_score < self._threshold
+        explanation = (
+            f"以下の脅威が検出されました: {', '.join(detected_unique)}"
+            if detected_unique
+            else "脅威は検出されませんでした。"
+        )
 
         return ScanResult(
             is_safe=is_safe,
-            risk_score=max_score,
-            threats=list(set(detected_threats)),
+            risk_score=round(final_score, 4),
+            threats=detected_unique,
             explanation=explanation,
             detector_used="rule_based",
             latency_ms=(time.monotonic() - start) * 1000,
