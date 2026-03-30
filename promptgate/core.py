@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from typing import Optional
@@ -55,7 +56,6 @@ class PromptGate:
         self._log_all = log_all
         self._whitelist_patterns = whitelist_patterns or []
         self._trusted_user_ids: set[str] = set(trusted_user_ids or [])
-        self._extra_rules: list[dict[str, str]] = []
 
         self._rule_detector = RuleBasedDetector(
             sensitivity=sensitivity,
@@ -76,13 +76,7 @@ class PromptGate:
             )
 
     def add_rule(self, name: str, pattern: str, severity: str = "medium") -> None:
-        self._extra_rules.append({"name": name, "pattern": pattern, "severity": severity})
-        self._rule_detector = RuleBasedDetector(
-            sensitivity=self._sensitivity,
-            language=self._language,
-            extra_rules=self._extra_rules,
-            whitelist_patterns=self._whitelist_patterns,
-        )
+        self._rule_detector.add_rule(name, pattern, severity)
 
     def scan(self, text: str, user_id: Optional[str] = None) -> ScanResult:
         start = time.monotonic()
@@ -111,10 +105,10 @@ class PromptGate:
             results.append(("llm_judge", llm_result))
 
         final = self._aggregate(results)
-        final.latency_ms = (time.monotonic() - start) * 1000
+        final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
 
         if self._log_all or not final.is_safe:
-            logger.info(
+            logger.warning(
                 "scan result: is_safe=%s risk_score=%.2f threats=%s",
                 final.is_safe,
                 final.risk_score,
@@ -124,7 +118,36 @@ class PromptGate:
         return final
 
     def scan_output(self, text: str) -> ScanResult:
-        return self.scan(text)
+        """LLMの出力テキストをスキャンする。
+
+        入力スキャン (scan) との違い:
+        - trusted_user_ids によるバイパスは行わない（出力は常に検査する）
+        - 埋め込み検出器はスキップ（出力スキャンには適合度が低い）
+        - LLMジャッジ検出器は実行する（情報漏洩の判定に有効）
+        """
+        start = time.monotonic()
+
+        results: list[tuple[str, ScanResult]] = []
+
+        rule_result = self._rule_detector.scan(text)
+        results.append(("rule", rule_result))
+
+        if self._llm_detector:
+            llm_result = self._llm_detector.scan(text)
+            results.append(("llm_judge", llm_result))
+
+        final = self._aggregate(results)
+        final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
+
+        if self._log_all or not final.is_safe:
+            logger.warning(
+                "output_scan result: is_safe=%s risk_score=%.2f threats=%s",
+                final.is_safe,
+                final.risk_score,
+                final.threats,
+            )
+
+        return final
 
     def _aggregate(self, results: list[tuple[str, ScanResult]]) -> ScanResult:
         if not results:
