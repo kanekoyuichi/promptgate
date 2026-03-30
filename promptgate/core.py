@@ -23,6 +23,12 @@ _DETECTOR_WEIGHTS: dict[str, float] = {
     "llm_judge": 0.25,
 }
 
+_SENSITIVITY_THRESHOLD: dict[str, float] = {
+    "low": 0.8,
+    "medium": 0.5,
+    "high": 0.3,
+}
+
 
 class PromptGate:
     def __init__(
@@ -33,6 +39,7 @@ class PromptGate:
         log_all: bool = False,
         whitelist_patterns: Optional[list[str]] = None,
         trusted_user_ids: Optional[list[str]] = None,
+        trusted_threshold: float = 0.95,
         llm_api_key: Optional[str] = None,
         llm_model: str = "claude-haiku-4-5-20251001",
     ) -> None:
@@ -43,6 +50,10 @@ class PromptGate:
         if language not in _VALID_LANGUAGES:
             raise ConfigurationError(
                 f"language は {_VALID_LANGUAGES} のいずれかを指定してください。"
+            )
+        if not (0.0 < trusted_threshold <= 1.0):
+            raise ConfigurationError(
+                "trusted_threshold は 0.0 より大きく 1.0 以下の値を指定してください。"
             )
 
         _detectors = detectors if detectors is not None else ["rule", "embedding"]
@@ -56,6 +67,7 @@ class PromptGate:
         self._log_all = log_all
         self._whitelist_patterns = whitelist_patterns or []
         self._trusted_user_ids: set[str] = set(trusted_user_ids or [])
+        self._trusted_threshold = trusted_threshold
 
         self._rule_detector = RuleBasedDetector(
             sensitivity=sensitivity,
@@ -80,16 +92,7 @@ class PromptGate:
 
     def scan(self, text: str, user_id: Optional[str] = None) -> ScanResult:
         start = time.monotonic()
-
-        if user_id and user_id in self._trusted_user_ids:
-            return ScanResult(
-                is_safe=True,
-                risk_score=0.0,
-                threats=[],
-                explanation="信頼されたユーザーのためスキャンをスキップしました。",
-                detector_used="none",
-                latency_ms=(time.monotonic() - start) * 1000,
-            )
+        is_trusted = user_id is not None and user_id in self._trusted_user_ids
 
         results: list[tuple[str, ScanResult]] = []
 
@@ -104,10 +107,19 @@ class PromptGate:
             llm_result = self._llm_detector.scan(text)
             results.append(("llm_judge", llm_result))
 
-        final = self._aggregate(results)
+        final = self._aggregate(results, is_trusted=is_trusted)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
 
-        if self._log_all or not final.is_safe:
+        if is_trusted:
+            # 信頼済みユーザーのスキャン結果は log_all 設定に関わらず常に記録する（監査証跡）
+            logger.info(
+                "trusted_user scan: user_id=%s is_safe=%s risk_score=%.2f threats=%s",
+                user_id,
+                final.is_safe,
+                final.risk_score,
+                final.threats,
+            )
+        elif self._log_all or not final.is_safe:
             logger.warning(
                 "scan result: is_safe=%s risk_score=%.2f threats=%s",
                 final.is_safe,
@@ -121,7 +133,7 @@ class PromptGate:
         """LLMの出力テキストをスキャンする。
 
         入力スキャン (scan) との違い:
-        - trusted_user_ids によるバイパスは行わない（出力は常に検査する）
+        - trusted_user_ids による閾値緩和は行わない（出力は常に厳格に検査する）
         - 埋め込み検出器はスキップ（出力スキャンには適合度が低い）
         - LLMジャッジ検出器は実行する（情報漏洩の判定に有効）
         """
@@ -136,7 +148,7 @@ class PromptGate:
             llm_result = self._llm_detector.scan(text)
             results.append(("llm_judge", llm_result))
 
-        final = self._aggregate(results)
+        final = self._aggregate(results, is_trusted=False)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
 
         if self._log_all or not final.is_safe:
@@ -149,7 +161,11 @@ class PromptGate:
 
         return final
 
-    def _aggregate(self, results: list[tuple[str, ScanResult]]) -> ScanResult:
+    def _aggregate(
+        self,
+        results: list[tuple[str, ScanResult]],
+        is_trusted: bool = False,
+    ) -> ScanResult:
         if not results:
             return ScanResult(is_safe=True, risk_score=0.0)
 
@@ -170,9 +186,20 @@ class PromptGate:
 
         final_score = weighted_score / total_weight if total_weight > 0 else 0.0
 
-        threshold_map = {"low": 0.8, "medium": 0.5, "high": 0.3}
-        threshold = threshold_map.get(self._sensitivity, 0.5)
+        # 信頼済みユーザーは通常閾値ではなく trusted_threshold を適用する。
+        # スキャンをスキップせず「閾値だけ緩和」することで、アカウント侵害時の
+        # blast radius を最小化しつつ監査証跡を確保する。
+        threshold = (
+            self._trusted_threshold
+            if is_trusted
+            else _SENSITIVITY_THRESHOLD.get(self._sensitivity, 0.5)
+        )
         is_safe = final_score < threshold
+
+        if is_trusted and explanations:
+            explanations.append(
+                f"(信頼済みユーザー: 緩和閾値 {self._trusted_threshold} 適用)"
+            )
 
         return ScanResult(
             is_safe=is_safe,
