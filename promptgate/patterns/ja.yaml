@@ -30,10 +30,10 @@ data_exfiltration:
   - "設定を出力して"
 
 indirect_injection:
-  - "<!--.*?(ignore|disregard|forget).*?-->"
+  - "<!--"
   - "\\[INST\\]"
   - "<instructions>"
-  - "\\{\\{.*?\\}\\}"
+  - "\\{\\{"
 
 prompt_leaking:
   - "最初の指示を繰り返して"
