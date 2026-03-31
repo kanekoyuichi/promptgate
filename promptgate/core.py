@@ -28,10 +28,24 @@ _DEFAULT_IMMEDIATE_BLOCK_THREATS: FrozenSet[str] = frozenset(
     {"direct_injection", "jailbreak"}
 )
 
-# Tier 3 コンセンサスブースト: この値以上のスコアを「弱いシグナル」と見なす
-_CONSENSUS_WEAK_SIGNAL: float = 0.3
-# コンセンサスブーストの最大値
-_CONSENSUS_MAX_BOOST: float = 0.10
+# Tier 2: threat 種別ごとの深刻度係数
+# risk_score にこの係数を乗じることで、同じ確信度でも脅威の重大性を反映する。
+# 係数が低い threat (prompt_leaking) は中程度の確信度では score が下がり、
+# 係数が高い threat (direct_injection) は確信度をそのまま維持する。
+_THREAT_SEVERITY: dict[str, float] = {
+    "direct_injection": 1.00,   # システムプロンプト上書き: 最重大
+    "jailbreak": 0.95,          # 安全制約回避: 重大
+    "data_exfiltration": 0.85,  # 情報漏洩誘導: 高
+    "indirect_injection": 0.80, # 外部データ経由攻撃: 中高
+    "prompt_leaking": 0.75,     # 内部プロンプト盗取: 中
+}
+_DEFAULT_THREAT_SEVERITY: float = 0.80  # 未知の threat タイプへのフォールバック
+
+# Tier 3: 同一 threat の複数検出器コロボレーションブースト
+# 「同じ threat を N 個の検出器が独立に検出した」場合のみブーストを加算する。
+# 異なる threat を別々の検出器が検出しても偶然の一致と見なしブーストしない。
+_SAME_THREAT_BOOST: float = 0.08       # 同一 threat を検出した追加検出器 1 つあたり
+_CORROBORATION_MAX_BOOST: float = 0.15  # コロボレーションブーストの上限
 
 
 class PromptGate:
@@ -229,26 +243,43 @@ class PromptGate:
                     )
 
         # -------------------------------------------------------------------
-        # Tier 2: 最大シグナル基準スコア
-        # 加重平均ではなく max を基底とし、強いシグナルが低スコア検出器に
-        # 希釈されることを防ぐ。
+        # Tier 2: threat 深刻度を加味した最大シグナル基準スコア
+        # 加重平均を使わず max を基底とし、強いシグナルが低スコア検出器に
+        # 希釈されるのを防ぐ。さらに検出された threat の深刻度で score を調整し、
+        # 同じ確信度でも脅威の重大性を最終スコアに反映する。
         # -------------------------------------------------------------------
-        base_score = max(r.risk_score for _, r in results)
+        def _severity_adjusted(result: ScanResult) -> float:
+            if not result.threats:
+                return result.risk_score
+            max_sev = max(
+                _THREAT_SEVERITY.get(t, _DEFAULT_THREAT_SEVERITY)
+                for t in result.threats
+            )
+            return result.risk_score * max_sev
+
+        base_score = max(_severity_adjusted(r) for _, r in results)
 
         # -------------------------------------------------------------------
-        # Tier 3: コンセンサスブースト
-        # _CONSENSUS_WEAK_SIGNAL 以上のスコアを出した検出器が複数ある場合、
-        # 相互補強として小さいブーストを加算する。
+        # Tier 3: 同一 threat の複数検出器コロボレーションブースト
+        # 同じ threat タイプを複数の検出器が独立に検出した場合のみブーストを加算する。
+        # 異なる threat の偶然の一致はブーストしない（過検出を避けるため）。
         # -------------------------------------------------------------------
-        flagging_count = sum(
-            1 for _, r in results if r.risk_score >= _CONSENSUS_WEAK_SIGNAL
+        threat_detector_count: dict[str, int] = {}
+        for _, result in results:
+            for threat in result.threats:
+                threat_detector_count[threat] = (
+                    threat_detector_count.get(threat, 0) + 1
+                )
+
+        corroboration_boost = min(
+            sum(
+                (count - 1) * _SAME_THREAT_BOOST
+                for count in threat_detector_count.values()
+                if count > 1
+            ),
+            _CORROBORATION_MAX_BOOST,
         )
-        consensus_boost = (
-            min(_CONSENSUS_MAX_BOOST * (flagging_count - 1), _CONSENSUS_MAX_BOOST)
-            if flagging_count > 1
-            else 0.0
-        )
-        final_score = min(base_score + consensus_boost, 1.0)
+        final_score = min(base_score + corroboration_boost, 1.0)
 
         # 信頼済みユーザーは trusted_threshold、それ以外は sensitivity に応じた閾値
         threshold = (
