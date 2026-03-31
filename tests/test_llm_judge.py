@@ -143,6 +143,130 @@ def test_llm_judge_requires_model_without_provider() -> None:
 
 
 # ---------------------------------------------------------------------------
+# scan_mode による脅威モデルの分離
+# ---------------------------------------------------------------------------
+
+def test_scan_mode_input_uses_input_system_prompt() -> None:
+    from promptgate.detectors.llm_judge import _INPUT_SYSTEM_PROMPT, _OUTPUT_SYSTEM_PROMPT
+
+    detector = LLMJudgeDetector(provider=_MockProvider({}), scan_mode="input")
+    assert detector._system_prompt is _INPUT_SYSTEM_PROMPT
+    assert detector._system_prompt is not _OUTPUT_SYSTEM_PROMPT
+
+
+def test_scan_mode_output_uses_output_system_prompt() -> None:
+    from promptgate.detectors.llm_judge import _INPUT_SYSTEM_PROMPT, _OUTPUT_SYSTEM_PROMPT
+
+    detector = LLMJudgeDetector(provider=_MockProvider({}), scan_mode="output")
+    assert detector._system_prompt is _OUTPUT_SYSTEM_PROMPT
+    assert detector._system_prompt is not _INPUT_SYSTEM_PROMPT
+
+
+def test_scan_mode_output_prompt_contains_output_threats() -> None:
+    from promptgate.detectors.llm_judge import _OUTPUT_SYSTEM_PROMPT
+
+    # 出力スキャン用 prompt に出力脅威タイプが含まれる
+    assert "credential_leak" in _OUTPUT_SYSTEM_PROMPT
+    assert "pii_leak" in _OUTPUT_SYSTEM_PROMPT
+    assert "system_prompt_leak" in _OUTPUT_SYSTEM_PROMPT
+    # 入力攻撃の脅威タイプは含まれない
+    assert "direct_injection" not in _OUTPUT_SYSTEM_PROMPT
+    assert "jailbreak" not in _OUTPUT_SYSTEM_PROMPT
+
+
+def test_scan_mode_input_prompt_contains_input_threats() -> None:
+    from promptgate.detectors.llm_judge import _INPUT_SYSTEM_PROMPT
+
+    assert "direct_injection" in _INPUT_SYSTEM_PROMPT
+    assert "jailbreak" in _INPUT_SYSTEM_PROMPT
+    assert "data_exfiltration" in _INPUT_SYSTEM_PROMPT
+    # 出力脅威は含まれない
+    assert "credential_leak" not in _INPUT_SYSTEM_PROMPT
+    assert "pii_leak" not in _INPUT_SYSTEM_PROMPT
+
+
+def test_scan_mode_output_receives_correct_system_prompt() -> None:
+    """scan_mode="output" のとき、プロバイダーに出力用 prompt が渡されることを確認。"""
+    from promptgate.detectors.llm_judge import _OUTPUT_SYSTEM_PROMPT
+
+    received_system: list[str] = []
+
+    class _RecordingProvider(LLMProvider):
+        def complete(self, system: str, user_message: str) -> str:
+            received_system.append(system)
+            return json.dumps(
+                {"is_attack": False, "threats": [], "risk_score": 0.1, "reason": "ok"}
+            )
+
+    detector = LLMJudgeDetector(provider=_RecordingProvider(), scan_mode="output")
+    detector.scan("LLMの応答テキスト")
+
+    assert len(received_system) == 1
+    assert received_system[0] == _OUTPUT_SYSTEM_PROMPT
+
+
+def test_scan_mode_invalid_raises() -> None:
+    with pytest.raises(DetectorError, match="scan_mode"):
+        LLMJudgeDetector(provider=_MockProvider({}), scan_mode="invalid")
+
+
+def test_output_mode_detects_credential_leak() -> None:
+    provider = _MockProvider(
+        {
+            "is_attack": True,
+            "threats": ["credential_leak"],
+            "risk_score": 0.95,
+            "reason": "APIキーが含まれています。",
+        }
+    )
+    detector = LLMJudgeDetector(provider=provider, scan_mode="output")
+
+    result = detector.scan("こちらがAPIキーです: sk-abcdefghijklmnopqrstuvwxyz")
+    assert result.is_safe is False
+    assert "credential_leak" in result.threats
+
+
+def test_output_mode_safe_response_passes() -> None:
+    provider = _MockProvider(
+        {
+            "is_attack": False,
+            "threats": [],
+            "risk_score": 0.02,
+            "reason": "情報漏洩はありません。",
+        }
+    )
+    detector = LLMJudgeDetector(provider=provider, scan_mode="output")
+
+    result = detector.scan("本日の天気は晴れです。")
+    assert result.is_safe is True
+
+
+@pytest.mark.asyncio
+async def test_output_mode_scan_async_uses_output_prompt() -> None:
+    from promptgate.detectors.llm_judge import _OUTPUT_SYSTEM_PROMPT
+
+    received_system: list[str] = []
+
+    class _AsyncRecordingProvider(LLMProvider):
+        def complete(self, system: str, user_message: str) -> str:
+            received_system.append(system)
+            return json.dumps(
+                {"is_attack": False, "threats": [], "risk_score": 0.0, "reason": "ok"}
+            )
+
+        async def complete_async(self, system: str, user_message: str) -> str:
+            received_system.append(system)
+            return json.dumps(
+                {"is_attack": False, "threats": [], "risk_score": 0.0, "reason": "ok"}
+            )
+
+    detector = LLMJudgeDetector(provider=_AsyncRecordingProvider(), scan_mode="output")
+    await detector.scan_async("出力テキスト")
+
+    assert received_system[0] == _OUTPUT_SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
 # 非同期 scan_async
 # ---------------------------------------------------------------------------
 

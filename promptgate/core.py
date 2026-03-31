@@ -156,14 +156,25 @@ class PromptGate:
             self._embedding_detector = EmbeddingDetector(sensitivity=sensitivity)
 
         self._llm_detector: Optional[LLMJudgeDetector] = None
+        self._llm_output_detector: Optional[LLMJudgeDetector] = None
         if "llm_judge" in _detectors:
             resolved_provider: LLMProvider = (
                 llm_provider
                 if llm_provider is not None
                 else AnthropicProvider(api_key=llm_api_key, model=llm_model)
             )
+            # 入力スキャン用: direct_injection / jailbreak / data_exfiltration 等を検出
             self._llm_detector = LLMJudgeDetector(
                 provider=resolved_provider,
+                scan_mode="input",
+                sensitivity=sensitivity,
+                on_error=llm_on_error,
+            )
+            # 出力スキャン用: credential_leak / pii_leak / system_prompt_leak を検出
+            # プロバイダー（API クライアント）は入力用と共有し、system prompt のみ切り替える。
+            self._llm_output_detector = LLMJudgeDetector(
+                provider=resolved_provider,
+                scan_mode="output",
                 sensitivity=sensitivity,
                 on_error=llm_on_error,
             )
@@ -253,8 +264,9 @@ class PromptGate:
         rule_result = self._output_rule_detector.scan(text)
         per_detector.append(("rule_output", rule_result))
 
-        if self._llm_detector:
-            llm_result = self._llm_detector.scan(text)
+        if self._llm_output_detector:
+            # 出力スキャン専用インスタンスを使用（credential_leak 等の出力脅威モデル）
+            llm_result = self._llm_output_detector.scan(text)
             per_detector.append(("llm_judge", llm_result))
 
         final = self._aggregate(per_detector, is_trusted=False)
@@ -362,8 +374,9 @@ class PromptGate:
         )
         per_detector.append(("rule_output", rule_result))
 
-        if self._llm_detector:
-            llm_result = await self._llm_detector.scan_async(text)
+        if self._llm_output_detector:
+            # 出力スキャン専用インスタンスを使用（credential_leak 等の出力脅威モデル）
+            llm_result = await self._llm_output_detector.scan_async(text)
             per_detector.append(("llm_judge", llm_result))
 
         final = self._aggregate(per_detector, is_trusted=False)
