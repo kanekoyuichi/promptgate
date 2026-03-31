@@ -386,6 +386,18 @@ gate.add_rule(
 )
 ```
 
+### ログ
+
+監査ログの設定・フィールド一覧・構造化ログへの接続方法は [docs/logging.md](docs/logging.md) を参照してください。
+
+```python
+gate = PromptGate(
+    log_all=True,       # 通過判定もすべてログに記録（デフォルト: False）
+    log_input=True,     # 入力テキスト原文を extra に含める（デフォルト: False）
+    tenant_id="app-1",  # テナント識別子を全ログに付与
+)
+```
+
 ### 出力スキャン（情報漏洩対策）
 
 ```python
