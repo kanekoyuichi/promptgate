@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import time
+import uuid
 from typing import FrozenSet, Optional
 
 from promptgate.detectors.embedding import EmbeddingDetector
@@ -60,6 +62,8 @@ class PromptGate:
         detectors: Optional[list[str]] = None,
         language: str = "auto",
         log_all: bool = False,
+        log_input: bool = False,
+        tenant_id: Optional[str] = None,
         whitelist_patterns: Optional[list[str]] = None,
         trusted_user_ids: Optional[list[str]] = None,
         trusted_threshold: float = 0.95,
@@ -69,6 +73,14 @@ class PromptGate:
         llm_model: Optional[str] = None,
         llm_on_error: str = "fail_open",
     ) -> None:
+        """
+        Args:
+            log_all: True の場合、安全と判定されたスキャンもログ記録する。
+            log_input: True の場合、入力テキストの原文をログに記録する。
+                デフォルトは False（SHA-256 ハッシュのみ記録）。
+                PII を含む可能性がある入力を扱う場合は False のままにしてください。
+            tenant_id: マルチテナント環境での識別子。全ログエントリに付与される。
+        """
         if sensitivity not in _VALID_SENSITIVITIES:
             raise ConfigurationError(
                 f"sensitivity は {_VALID_SENSITIVITIES} のいずれかを指定してください。"
@@ -103,6 +115,8 @@ class PromptGate:
         self._detector_names = _detectors
         self._language = language
         self._log_all = log_all
+        self._log_input = log_input
+        self._tenant_id = tenant_id
         self._whitelist_patterns = whitelist_patterns or []
         self._trusted_user_ids: set[str] = set(trusted_user_ids or [])
         self._trusted_threshold = trusted_threshold
@@ -146,46 +160,49 @@ class PromptGate:
     def add_rule(self, name: str, pattern: str, severity: str = "medium") -> None:
         self._rule_detector.add_rule(name, pattern, severity)
 
-    def scan(self, text: str, user_id: Optional[str] = None) -> ScanResult:
+    def scan(
+        self,
+        text: str,
+        user_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> ScanResult:
         start = time.monotonic()
+        if trace_id is None:
+            trace_id = uuid.uuid4().hex[:16]
         is_trusted = user_id is not None and user_id in self._trusted_user_ids
 
-        results: list[tuple[str, ScanResult]] = []
+        per_detector: list[tuple[str, ScanResult]] = []
 
         rule_result = self._rule_detector.scan(text)
-        results.append(("rule", rule_result))
+        per_detector.append(("rule", rule_result))
 
         if self._embedding_detector and self._sensitivity in ("medium", "high"):
             emb_result = self._embedding_detector.scan(text)
-            results.append(("embedding", emb_result))
+            per_detector.append(("embedding", emb_result))
 
         if self._llm_detector:
             llm_result = self._llm_detector.scan(text)
-            results.append(("llm_judge", llm_result))
+            per_detector.append(("llm_judge", llm_result))
 
-        final = self._aggregate(results, is_trusted=is_trusted)
+        final = self._aggregate(per_detector, is_trusted=is_trusted)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
 
-        if is_trusted:
-            # 信頼済みユーザーのスキャン結果は log_all 設定に関わらず常に記録する（監査証跡）
-            logger.info(
-                "trusted_user scan: user_id=%s is_safe=%s risk_score=%.2f threats=%s",
-                user_id,
-                final.is_safe,
-                final.risk_score,
-                final.threats,
-            )
-        elif self._log_all or not final.is_safe:
-            logger.warning(
-                "scan result: is_safe=%s risk_score=%.2f threats=%s",
-                final.is_safe,
-                final.risk_score,
-                final.threats,
-            )
-
+        self._emit_audit_log(
+            scan_type="input",
+            text=text,
+            user_id=user_id,
+            trace_id=trace_id,
+            is_trusted=is_trusted,
+            per_detector=per_detector,
+            final=final,
+        )
         return final
 
-    def scan_output(self, text: str) -> ScanResult:
+    def scan_output(
+        self,
+        text: str,
+        trace_id: Optional[str] = None,
+    ) -> ScanResult:
         """LLMの出力テキストをスキャンする。
 
         入力スキャン (scan) とは脅威モデルが異なる:
@@ -197,28 +214,108 @@ class PromptGate:
         - LLMジャッジ検出器は実行する（文脈を踏まえた情報漏洩判定に有効）
         """
         start = time.monotonic()
+        if trace_id is None:
+            trace_id = uuid.uuid4().hex[:16]
 
-        results: list[tuple[str, ScanResult]] = []
+        per_detector: list[tuple[str, ScanResult]] = []
 
         rule_result = self._output_rule_detector.scan(text)
-        results.append(("rule_output", rule_result))
+        per_detector.append(("rule_output", rule_result))
 
         if self._llm_detector:
             llm_result = self._llm_detector.scan(text)
-            results.append(("llm_judge", llm_result))
+            per_detector.append(("llm_judge", llm_result))
 
-        final = self._aggregate(results, is_trusted=False)
+        final = self._aggregate(per_detector, is_trusted=False)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
 
-        if self._log_all or not final.is_safe:
-            logger.warning(
-                "output_scan result: is_safe=%s risk_score=%.2f threats=%s",
-                final.is_safe,
-                final.risk_score,
-                final.threats,
-            )
-
+        self._emit_audit_log(
+            scan_type="output",
+            text=text,
+            user_id=None,
+            trace_id=trace_id,
+            is_trusted=False,
+            per_detector=per_detector,
+            final=final,
+        )
         return final
+
+    def _emit_audit_log(
+        self,
+        *,
+        scan_type: str,
+        text: str,
+        user_id: Optional[str],
+        trace_id: str,
+        is_trusted: bool,
+        per_detector: list[tuple[str, ScanResult]],
+        final: ScanResult,
+    ) -> None:
+        """構造化監査ログを出力する。
+
+        ログレベル:
+            WARNING: ブロック判定 (is_safe=False)
+            INFO:    通過判定 (is_safe=True) のうち log_all=True または信頼済みユーザー
+
+        extra フィールド (構造化ログハンドラで利用可能):
+            trace_id        リクエスト追跡 ID（未指定時は自動生成 UUID）
+            tenant_id       テナント識別子（PromptGate 初期化時に設定）
+            scan_type       "input" または "output"
+            input_hash      入力テキストの SHA-256 先頭 16 桁（相関追跡用）
+            input_length    入力テキストの文字数
+            user_id         スキャン対象ユーザー ID（scan() に渡された値）
+            is_trusted      信頼済みユーザーフラグ
+            is_safe         最終判定
+            risk_score      最終リスクスコア (0.0–1.0)
+            threats         検出された脅威タイプのリスト
+            detector_scores 検出器別スコア {"rule": 0.9, "llm_judge": 0.85, ...}
+            rule_hits       ルール検出器がヒットした threat タイプ（rule_based の生結果）
+            latency_ms      スキャン全体の処理時間（ミリ秒）
+            input_text      入力テキスト原文（log_input=True 時のみ付与）
+        """
+        should_log = not final.is_safe or self._log_all or is_trusted
+        if not should_log:
+            return
+
+        input_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+
+        rule_hits: list[str] = [
+            threat
+            for name, r in per_detector
+            if name in ("rule", "rule_output")
+            for threat in r.threats
+        ]
+        detector_scores = {name: round(r.risk_score, 4) for name, r in per_detector}
+
+        extra: dict[str, object] = {
+            "trace_id": trace_id,
+            "tenant_id": self._tenant_id,
+            "scan_type": scan_type,
+            "input_hash": input_hash,
+            "input_length": len(text),
+            "user_id": user_id,
+            "is_trusted": is_trusted,
+            "is_safe": final.is_safe,
+            "risk_score": final.risk_score,
+            "threats": list(final.threats),
+            "detector_scores": detector_scores,
+            "rule_hits": rule_hits,
+            "latency_ms": round(final.latency_ms, 2),
+        }
+        if self._log_input:
+            extra["input_text"] = text
+
+        verdict = "BLOCKED" if not final.is_safe else "ALLOWED"
+        msg = (
+            f"promptgate.scan verdict={verdict}"
+            f" trace_id={trace_id}"
+            f" scan_type={scan_type}"
+            f" input_hash={input_hash}"
+            f" risk_score={final.risk_score:.4f}"
+            f" threats={list(final.threats)}"
+        )
+        level = logging.WARNING if not final.is_safe else logging.INFO
+        logger.log(level, msg, extra=extra)
 
     def _aggregate(
         self,
