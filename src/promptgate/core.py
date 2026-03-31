@@ -200,7 +200,7 @@ class PromptGate:
             gate.warmup()  # Lambda の init フェーズや起動スクリプトで呼ぶ
         """
         if self._embedding_detector is not None:
-            EmbeddingDetector._load_model(self._embedding_detector._model_name)
+            self._embedding_detector.warmup()
 
     def scan(
         self,
@@ -321,6 +321,24 @@ class PromptGate:
         rule_result = await loop.run_in_executor(None, self._rule_detector.scan, text)
         per_detector.append(("rule", rule_result))
 
+        # rule が即時ブロック条件を満たした場合、embedding / llm タスクを起動しない。
+        # 同期版 scan() と同じ early exit 挙動にすることで API コストを抑える。
+        if not is_trusted:
+            triggered = set(rule_result.threats) & self._immediate_block_threats
+            if triggered and rule_result.risk_score >= self._immediate_block_score:
+                final = self._aggregate(per_detector, is_trusted=is_trusted)
+                final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
+                self._emit_audit_log(
+                    scan_type="input",
+                    text=text,
+                    user_id=user_id,
+                    trace_id=trace_id,
+                    is_trusted=is_trusted,
+                    per_detector=per_detector,
+                    final=final,
+                )
+                return final
+
         # embedding + LLM judge を並行実行
         tasks: list[asyncio.Task[ScanResult]] = []
         task_names: list[str] = []
@@ -402,6 +420,7 @@ class PromptGate:
         texts: list[str],
         user_id: Optional[str] = None,
         trace_id_prefix: Optional[str] = None,
+        max_concurrency: int = 10,
     ) -> list[ScanResult]:
         """複数テキストを並行スキャンする。
 
@@ -409,10 +428,12 @@ class PromptGate:
         各テキストは独立した asyncio タスクとして並行実行される。
 
         Args:
-            texts:           スキャン対象テキストのリスト。
-            user_id:         全テキストに共通のユーザー ID（省略可）。
-            trace_id_prefix: トレース ID のプレフィックス。指定した場合
-                             "{prefix}-{index}" の形式でトレース ID が生成される。
+            texts:            スキャン対象テキストのリスト。
+            user_id:          全テキストに共通のユーザー ID（省略可）。
+            trace_id_prefix:  トレース ID のプレフィックス。指定した場合
+                              "{prefix}-{index}" の形式でトレース ID が生成される。
+            max_concurrency:  同時実行するスキャン数の上限（デフォルト: 10）。
+                              llm_judge 有効時は API レート制限を考慮して調整すること。
 
         Returns:
             texts と同じ順序の ScanResult リスト。
@@ -431,11 +452,17 @@ class PromptGate:
                 return None
             return f"{trace_id_prefix}-{i}"
 
-        coros = [
-            self.scan_async(text, user_id=user_id, trace_id=_make_trace_id(i))
-            for i, text in enumerate(texts)
-        ]
-        results: list[ScanResult] = list(await asyncio.gather(*coros))
+        sem = asyncio.Semaphore(max_concurrency)
+
+        async def _scan_with_sem(text: str, i: int) -> ScanResult:
+            async with sem:
+                return await self.scan_async(
+                    text, user_id=user_id, trace_id=_make_trace_id(i)
+                )
+
+        results: list[ScanResult] = list(
+            await asyncio.gather(*[_scan_with_sem(t, i) for i, t in enumerate(texts)])
+        )
         return results
 
     # ------------------------------------------------------------------
