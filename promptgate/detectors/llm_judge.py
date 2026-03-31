@@ -67,7 +67,7 @@ class LLMJudgeDetector(BaseDetector):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "claude-haiku-4-5-20251001",
+        model: Optional[str] = None,
         sensitivity: str = "medium",
         on_error: str = "fail_open",
     ) -> None:
@@ -81,6 +81,12 @@ class LLMJudgeDetector(BaseDetector):
         if on_error not in _VALID_ON_ERROR:
             raise DetectorError(
                 f"on_error は {_VALID_ON_ERROR} のいずれかを指定してください。"
+            )
+        if model is None:
+            raise DetectorError(
+                "llm_judge 検出器には model の指定が必要です。"
+                " 利用環境に合わせたモデル識別子を指定してください。"
+                " 例 (Anthropic API): model='claude-haiku-4-5-20251001'"
             )
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self._model = model
