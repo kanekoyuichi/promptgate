@@ -218,6 +218,7 @@ gate = PromptGate(
     llm_on_error="fail_open",   # 障害時は通過（可用性優先）
     # llm_on_error="fail_close", # 障害時は遮断（セキュリティ優先）
 )
+```
 
 ---
 
