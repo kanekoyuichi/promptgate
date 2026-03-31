@@ -185,8 +185,9 @@ class RuleBasedDetector(BaseDetector):
             self._compiled[threat] = compiled_list
 
     def add_rule(self, name: str, pattern: str, severity: str = "medium") -> None:
-        self._patterns.setdefault(name, []).append(pattern)
-        self._custom_scores[name] = _SEVERITY_TO_SCORE.get(severity, 0.7)
+        # バリデーションを先に行い、通過してから内部状態を更新する。
+        # _patterns への追加を後回しにすることで、無効パターンが
+        # _patterns にのみ存在して _compiled に入らない不整合を防ぐ。
         try:
             compiled = re.compile(pattern, re.IGNORECASE)
         except re.error as e:
@@ -204,6 +205,8 @@ class RuleBasedDetector(BaseDetector):
                 pattern,
             )
             return
+        self._patterns.setdefault(name, []).append(pattern)
+        self._custom_scores[name] = _SEVERITY_TO_SCORE.get(severity, 0.7)
         self._compiled.setdefault(name, []).append(compiled)
 
     def scan(self, text: str) -> ScanResult:

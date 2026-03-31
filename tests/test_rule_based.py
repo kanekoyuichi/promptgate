@@ -238,6 +238,31 @@ def test_add_rule_invalid_regex_skipped_gracefully() -> None:
     assert "broken" not in result.threats
 
 
+def test_add_rule_invalid_regex_not_stored_in_patterns() -> None:
+    # 不正な正規表現は _patterns にも残らないこと（_compiled との不整合を防ぐ）
+    detector = RuleBasedDetector()
+    detector.add_rule(name="broken", pattern="[invalid(", severity="high")
+    assert "broken" not in detector._patterns
+    assert "broken" not in detector._compiled
+
+
+def test_add_rule_unsafe_pattern_not_stored_in_patterns() -> None:
+    # 空文字列にマッチする unsafe パターンも _patterns に残らないこと
+    detector = RuleBasedDetector()
+    detector.add_rule(name="unsafe", pattern=".*", severity="high")
+    assert "unsafe" not in detector._patterns
+    assert "unsafe" not in detector._compiled
+
+
+def test_add_rule_valid_pattern_stored_in_both() -> None:
+    # 正常なパターンは _patterns と _compiled の両方に追加されること
+    detector = RuleBasedDetector()
+    detector.add_rule(name="custom", pattern="evil keyword", severity="high")
+    assert "custom" in detector._patterns
+    assert "custom" in detector._compiled
+    assert len(detector._patterns["custom"]) == len(detector._compiled["custom"])
+
+
 def test_corrupted_yaml_file_skips_invalid_patterns(tmp_path: "pytest.TempPathFactory") -> None:
     # 不正な正規表現を含む YAML ファイルでも、有効なパターンは機能する
     from pathlib import Path
