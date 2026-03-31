@@ -33,11 +33,16 @@ _DEFAULT_IMMEDIATE_BLOCK_THREATS: FrozenSet[str] = frozenset(
 # 係数が低い threat (prompt_leaking) は中程度の確信度では score が下がり、
 # 係数が高い threat (direct_injection) は確信度をそのまま維持する。
 _THREAT_SEVERITY: dict[str, float] = {
+    # 入力 threat: 攻撃者がLLMに送る悪意のある指示
     "direct_injection": 1.00,   # システムプロンプト上書き: 最重大
     "jailbreak": 0.95,          # 安全制約回避: 重大
     "data_exfiltration": 0.85,  # 情報漏洩誘導: 高
     "indirect_injection": 0.80, # 外部データ経由攻撃: 中高
     "prompt_leaking": 0.75,     # 内部プロンプト盗取: 中
+    # 出力 threat: LLMが生成した応答に含まれる危険なコンテンツ
+    "credential_leak": 1.00,    # APIキー・パスワード露出: 最重大
+    "pii_leak": 0.90,           # 個人情報露出: 重大
+    "system_prompt_leak": 0.85, # システムプロンプト内容の露出: 高
 }
 _DEFAULT_THREAT_SEVERITY: float = 0.80  # 未知の threat タイプへのフォールバック
 
@@ -112,6 +117,17 @@ class PromptGate:
             sensitivity=sensitivity,
             language=language,
             whitelist_patterns=self._whitelist_patterns,
+            scan_mode="input",
+        )
+        # 出力スキャン専用の rule detector（入力とは別の threat モデル）
+        # 入力: direct_injection / jailbreak / data_exfiltration / ...
+        # 出力: credential_leak / pii_leak / system_prompt_leak
+        self._output_rule_detector = RuleBasedDetector(
+            sensitivity=sensitivity,
+            language=language,
+            whitelist_patterns=self._whitelist_patterns,
+            scan_mode="output",
+            normalize_input=False,
         )
 
         self._embedding_detector: Optional[EmbeddingDetector] = None
@@ -172,17 +188,20 @@ class PromptGate:
     def scan_output(self, text: str) -> ScanResult:
         """LLMの出力テキストをスキャンする。
 
-        入力スキャン (scan) との違い:
+        入力スキャン (scan) とは脅威モデルが異なる:
+        - 入力脅威: direct_injection / jailbreak / data_exfiltration / ...
+        - 出力脅威: credential_leak / pii_leak / system_prompt_leak
+        - 出力専用パターンファイル (*_output.yaml) を使用する
         - trusted_user_ids による閾値緩和は行わない（出力は常に厳格に検査する）
-        - 埋め込み検出器はスキップ（出力スキャンには適合度が低い）
-        - LLMジャッジ検出器は実行する（情報漏洩の判定に有効）
+        - 埋め込み検出器はスキップ（出力の意味類似度判定は適合度が低い）
+        - LLMジャッジ検出器は実行する（文脈を踏まえた情報漏洩判定に有効）
         """
         start = time.monotonic()
 
         results: list[tuple[str, ScanResult]] = []
 
-        rule_result = self._rule_detector.scan(text)
-        results.append(("rule", rule_result))
+        rule_result = self._output_rule_detector.scan(text)
+        results.append(("rule_output", rule_result))
 
         if self._llm_detector:
             llm_result = self._llm_detector.scan(text)

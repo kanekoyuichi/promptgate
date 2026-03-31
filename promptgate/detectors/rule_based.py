@@ -18,11 +18,16 @@ logger = logging.getLogger(__name__)
 _PATTERNS_DIR = Path(__file__).parent.parent / "patterns"
 
 _SEVERITY_SCORE: dict[str, float] = {
+    # 入力スキャン threat
     "direct_injection": 0.9,
     "jailbreak": 0.85,
     "data_exfiltration": 0.8,
     "indirect_injection": 0.75,
     "prompt_leaking": 0.7,
+    # 出力スキャン threat
+    "credential_leak": 0.95,
+    "pii_leak": 0.80,
+    "system_prompt_leak": 0.75,
 }
 
 # core.py の _aggregate threshold_map と統一
@@ -51,7 +56,8 @@ def _is_safe_pattern(compiled: re.Pattern[str]) -> bool:
     return compiled.search("") is None
 
 
-def _load_patterns(language: str) -> dict[str, list[str]]:
+def _load_patterns(language: str, scan_mode: str = "input") -> dict[str, list[str]]:
+    suffix = "_output" if scan_mode == "output" else ""
     langs: list[str]
     if language == "auto":
         langs = ["ja", "en"]
@@ -60,7 +66,7 @@ def _load_patterns(language: str) -> dict[str, list[str]]:
 
     merged: dict[str, list[str]] = {}
     for lang in langs:
-        path = _PATTERNS_DIR / f"{lang}.yaml"
+        path = _PATTERNS_DIR / f"{lang}{suffix}.yaml"
         if not path.exists():
             raise DetectorError(f"パターンファイルが見つかりません: {path}")
         with open(path, encoding="utf-8") as f:
@@ -106,9 +112,15 @@ class RuleBasedDetector(BaseDetector):
         language: str = "auto",
         extra_rules: Optional[list[dict[str, str]]] = None,
         whitelist_patterns: Optional[list[str]] = None,
+        scan_mode: str = "input",
+        normalize_input: bool = True,
     ) -> None:
         self._threshold = _SENSITIVITY_THRESHOLD.get(sensitivity, 0.5)
-        self._patterns = _load_patterns(language)
+        # 出力スキャンでは正規化しない: Email・APIキー等の構造を壊さないため。
+        # 正規化はインジェクション回避 ("i.g.n.o.r.e" 等) に対抗するためのもので
+        # LLM が生成した出力テキストには不要。
+        self._normalize_input = normalize_input
+        self._patterns = _load_patterns(language, scan_mode)
         self._custom_scores: dict[str, float] = {}
         self._whitelist: list[re.Pattern[str]] = [
             re.compile(p, re.IGNORECASE) for p in (whitelist_patterns or [])
@@ -174,9 +186,7 @@ class RuleBasedDetector(BaseDetector):
     def scan(self, text: str) -> ScanResult:
         start = time.monotonic()
 
-        # Fix B: 正規化済みテキストに対してパターンマッチを行う
-        # NFKC変換・ゼロ幅文字除去・区切りノイズ除去により回避攻撃を無効化する
-        normalized = normalize(text)
+        normalized = normalize(text) if self._normalize_input else text
 
         detected_threats: list[str] = []
 
