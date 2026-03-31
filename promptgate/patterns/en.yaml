@@ -1,25 +1,25 @@
 direct_injection:
   - "ignore previous instructions"
   - "ignore all instructions"
-  - "disregard your"
+  - "\\bdisregard\\s+(?:your|all|previous|prior)\\s+(?:instructions|rules|guidelines)\\b"
   - "forget your instructions"
-  - "you are now"
-  - "your new instructions"
+  - "\\byour\\s+new\\s+instructions\\b"
   - "override instructions"
-  - "you are no longer"
-  - "act as if"
+  - "\\byou\\s+are\\s+no\\s+longer\\b"
+  - "\\bact\\s+as\\s+if\\s+you\\b"
+  - "\\byou\\s+are\\s+now\\s+(?:a\\b|an\\b|in\\b|acting|playing|going|required|supposed)"
 
 jailbreak:
-  - "DAN mode"
-  - "do anything now"
-  - "jailbreak"
-  - "no restrictions"
-  - "without limitations"
-  - "bypass your filters"
+  - "\\bDAN\\s+mode\\b"
+  - "\\bdo\\s+anything\\s+now\\b"
+  - "\\bjailbreak\\b"
+  - "\\bno\\s+restrictions\\b"
+  - "\\bwithout\\s+(?:any\\s+)?(?:limitations|restrictions)\\b"
+  - "\\bbypass\\s+(?:your\\s+)?(?:filters|restrictions|safety)"
   - "pretend you have no"
   - "your true self"
-  - "evil mode"
-  - "developer mode"
+  - "\\bevil\\s+mode\\b"
+  - "\\bdeveloper\\s+mode\\b"
 
 data_exfiltration:
   - "show me your system prompt"
@@ -30,10 +30,10 @@ data_exfiltration:
   - "display your initial prompt"
 
 indirect_injection:
-  - "<!--.*?(ignore|disregard|forget).*?-->"
+  - "<!--"
   - "\\[INST\\]"
   - "<instructions>"
-  - "\\{\\{.*?\\}\\}"
+  - "\\{\\{"
   - "<system>"
 
 prompt_leaking:
