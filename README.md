@@ -152,13 +152,40 @@ gate = PromptGate(
 |---------|------|----------|--------|
 | `"rule"` | 正規表現・キーワードによる高速検出 | 有効 | なし |
 | `"embedding"` | 意味的類似度による言い換え攻撃対応 | 有効 | `sentence-transformers` |
-| `"llm_judge"` | LLM による高精度審査 | 無効 | `anthropic`・APIキー |
+| `"llm_judge"` | LLM による高精度審査 | 無効 | `anthropic`・APIキー ⚠️ |
+
+> ⚠️ **`llm_judge` を有効にする前に確認してください**
+> - 外部 API への通信が発生します（データがサードパーティに送信されます）
+> - レイテンシが増加します（目安: +150〜200ms）
+> - API 呼び出しコストが発生します
+> - API 障害・タイムアウト時の挙動を `llm_on_error` で明示的に設定してください
 
 ```python
 # LLM-as-Judge を有効にする場合
 gate = PromptGate(
     detectors=["rule", "embedding", "llm_judge"],
-    llm_api_key="sk-ant-...",  # または環境変数 ANTHROPIC_API_KEY
+    llm_api_key="sk-ant-...",        # または環境変数 ANTHROPIC_API_KEY
+    llm_on_error="fail_open",        # 障害時の挙動（後述）
+)
+```
+
+### LLM 障害時のフェイルポリシー（`llm_on_error`）
+
+API タイムアウト・ネットワーク断・レスポンス不正など例外が発生した場合の挙動を指定します。
+
+| 値 | 動作 | 適用場面 |
+|----|------|---------|
+| `"fail_open"` | `is_safe=True` を返して通過させる（**デフォルト**） | 可用性優先・LLM をベストエフォート利用 |
+| `"fail_close"` | `is_safe=False` を返してブロックする | セキュリティ優先（金融・医療など） |
+| `"raise"` | `DetectorError` を送出する | 呼び出し元で明示的にハンドリングしたい場合 |
+
+いずれの場合も障害内容は `WARNING` レベルでログに記録されます。
+
+```python
+# セキュリティ優先の設定例
+gate = PromptGate(
+    detectors=["rule", "embedding", "llm_judge"],
+    llm_on_error="fail_close",
 )
 ```
 
