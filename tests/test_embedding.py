@@ -108,8 +108,11 @@ def test_mock_detects_attack() -> None:
     result = detector.scan("any text")
 
     assert result.is_safe is False
-    assert len(result.threats) == 1
-    assert result.threats[0] in ("direct_injection", "jailbreak", "data_exfiltration", "prompt_leaking")
+    assert len(result.threats) >= 1
+    assert result.threats[0] in (
+        "direct_injection", "jailbreak", "data_exfiltration",
+        "prompt_leaking", "indirect_injection",
+    )
     assert result.risk_score >= 0.75
     assert result.detector_used == "embedding"
 
@@ -128,6 +131,34 @@ def test_mock_safe_text_passes() -> None:
     assert result.is_safe is True
     assert list(result.threats) == []
     assert result.risk_score == 0.0
+
+
+@requires_torch
+def test_mock_multilabel_returns_all_categories() -> None:
+    """全カテゴリが閾値を超えた場合、複数の threats が返される（多ラベル検出）。"""
+    from promptgate.detectors.embedding import EmbeddingDetector, _DEFAULT_MODEL
+
+    # query と exemplar が全カテゴリで同一方向 → 全カテゴリが threshold を超える
+    _setup_mock_detector(_DEFAULT_MODEL, query_direction=0, exemplar_direction=0)
+
+    detector = EmbeddingDetector(sensitivity="medium")
+    result = detector.scan("any text")
+
+    assert result.is_safe is False
+    assert len(result.threats) > 1
+    # 5カテゴリすべてが含まれること
+    expected_categories = {
+        "direct_injection", "jailbreak", "data_exfiltration",
+        "prompt_leaking", "indirect_injection",
+    }
+    assert set(result.threats) == expected_categories
+
+
+def test_mock_indirect_injection_category_present() -> None:
+    """indirect_injection カテゴリが検出対象に含まれている。"""
+    from promptgate.detectors.embedding import _ATTACK_EXEMPLARS
+
+    assert "indirect_injection" in _ATTACK_EXEMPLARS
 
 
 @requires_torch
