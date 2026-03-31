@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 from promptgate.detectors.base import BaseDetector
 from promptgate.exceptions import DetectorError
+from promptgate.providers.anthropic import AnthropicProvider
+from promptgate.providers.base import LLMProvider
 from promptgate.result import ScanResult
-
-if TYPE_CHECKING:
-    import anthropic as anthropic_module
 
 logger = logging.getLogger(__name__)
 
@@ -63,95 +61,119 @@ def _extract_json(raw: str) -> dict[str, Any]:
     raise DetectorError(f"LLM 応答から JSON を抽出できませんでした: {raw!r}")
 
 
+def _parse_response(raw: str) -> ScanResult:
+    """LLM 応答テキストを ScanResult に変換する（共通ロジック）。"""
+    data: dict[str, Any] = _extract_json(raw)
+
+    is_attack: bool = data.get("is_attack", False)
+    threats: list[str] = data.get("threats", [])
+    risk_score: float = float(data.get("risk_score", 0.0))
+    reason: str = data.get("reason", "")
+
+    # is_attack と risk_score の整合性を保証する
+    if is_attack and risk_score < 0.5:
+        risk_score = 0.5
+    elif not is_attack and risk_score >= 0.5:
+        risk_score = 0.4
+
+    return ScanResult(
+        is_safe=not is_attack,
+        risk_score=risk_score,
+        threats=threats,
+        explanation=reason,
+        detector_used="llm_judge",
+        latency_ms=0.0,
+    )
+
+
 class LLMJudgeDetector(BaseDetector):
+    """LLM を審査員として使うプロンプトインジェクション検出器。
+
+    プロバイダーを直接渡す方法（推奨）と、後方互換のための api_key + model を渡す方法の
+    両方をサポートする。
+
+    Args:
+        provider:   LLMProvider インスタンス。指定した場合 api_key / model は無視される。
+        api_key:    Anthropic API キー（provider 未指定時）。
+        model:      モデル識別子（provider 未指定時・必須）。
+        sensitivity: 感度レベル（現在は未使用。将来の拡張のために予約）。
+        on_error:   API 障害・JSON 解析失敗など例外発生時の挙動。
+            "fail_open"  - is_safe=True を返す（可用性優先・デフォルト）
+            "fail_close" - is_safe=False を返す（セキュリティ優先）
+            "raise"      - DetectorError をそのまま送出する
+
+    Example::
+
+        from promptgate.providers import AnthropicProvider, OpenAIProvider
+        from promptgate.detectors.llm_judge import LLMJudgeDetector
+
+        # Anthropic
+        det = LLMJudgeDetector(provider=AnthropicProvider(model="claude-haiku-4-5-20251001"))
+
+        # OpenAI
+        det = LLMJudgeDetector(provider=OpenAIProvider(model="gpt-4o-mini"))
+
+        # 後方互換（Anthropic のみ）
+        det = LLMJudgeDetector(api_key="sk-ant-...", model="claude-haiku-4-5-20251001")
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         sensitivity: str = "medium",
         on_error: str = "fail_open",
+        provider: Optional[LLMProvider] = None,
     ) -> None:
-        """
-        Args:
-            on_error: API 障害・JSON 解析失敗など例外発生時の挙動。
-                "fail_open"  - is_safe=True を返す（可用性優先・デフォルト）
-                "fail_close" - is_safe=False を返す（セキュリティ優先）
-                "raise"      - DetectorError をそのまま送出する
-        """
         if on_error not in _VALID_ON_ERROR:
             raise DetectorError(
                 f"on_error は {_VALID_ON_ERROR} のいずれかを指定してください。"
             )
-        if model is None:
-            raise DetectorError(
-                "llm_judge 検出器には model の指定が必要です。"
-                " 利用プロバイダーのドキュメントを参照し、"
-                " 適切なモデル識別子を model パラメータに渡してください。"
-            )
-        self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        self._model = model
+        if provider is None:
+            if model is None:
+                raise DetectorError(
+                    "llm_judge 検出器には model の指定が必要です。"
+                    " 利用プロバイダーのドキュメントを参照し、"
+                    " 適切なモデル識別子を model パラメータに渡してください。"
+                )
+            provider = AnthropicProvider(api_key=api_key, model=model)
+
+        self._provider = provider
         self._sensitivity = sensitivity
         self._on_error = on_error
-        self._client: Optional[anthropic_module.Anthropic] = None
-
-    def _get_client(self) -> anthropic_module.Anthropic:
-        if self._client is not None:
-            return self._client
-        try:
-            import anthropic
-        except ImportError as e:
-            raise DetectorError(
-                "LLMJudgeDetector には anthropic パッケージが必要です。"
-                " pip install anthropic でインストールしてください。"
-            ) from e
-
-        self._client = anthropic.Anthropic(api_key=self._api_key)
-        return self._client
 
     def scan(self, text: str) -> ScanResult:
         start = time.monotonic()
         try:
-            return self._scan_internal(text, start)
+            raw = self._provider.complete(_SYSTEM_PROMPT, text)
+            result = _parse_response(raw)
+            return ScanResult(
+                is_safe=result.is_safe,
+                risk_score=result.risk_score,
+                threats=result.threats,
+                explanation=result.explanation,
+                detector_used="llm_judge",
+                latency_ms=(time.monotonic() - start) * 1000,
+            )
         except DetectorError as exc:
             return self._handle_error(exc, start)
 
-    def _scan_internal(self, text: str, start: float) -> ScanResult:
-        client = self._get_client()
-
-        raw = ""
+    async def scan_async(self, text: str) -> ScanResult:
+        """非同期スキャン。プロバイダーの complete_async() を使用する。"""
+        start = time.monotonic()
         try:
-            message = client.messages.create(
-                model=self._model,
-                max_tokens=256,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": text}],
-                timeout=30.0,
+            raw = await self._provider.complete_async(_SYSTEM_PROMPT, text)
+            result = _parse_response(raw)
+            return ScanResult(
+                is_safe=result.is_safe,
+                risk_score=result.risk_score,
+                threats=result.threats,
+                explanation=result.explanation,
+                detector_used="llm_judge",
+                latency_ms=(time.monotonic() - start) * 1000,
             )
-            raw = message.content[0].text.strip()
-        except Exception as e:
-            raise DetectorError(f"LLM 呼び出しに失敗しました: {e}") from e
-
-        data: dict[str, Any] = _extract_json(raw)
-
-        is_attack: bool = data.get("is_attack", False)
-        threats: list[str] = data.get("threats", [])
-        risk_score: float = float(data.get("risk_score", 0.0))
-        reason: str = data.get("reason", "")
-
-        # is_attack と risk_score の整合性を保証する
-        if is_attack and risk_score < 0.5:
-            risk_score = 0.5
-        elif not is_attack and risk_score >= 0.5:
-            risk_score = 0.4
-
-        return ScanResult(
-            is_safe=not is_attack,
-            risk_score=risk_score,
-            threats=threats,
-            explanation=reason,
-            detector_used="llm_judge",
-            latency_ms=(time.monotonic() - start) * 1000,
-        )
+        except DetectorError as exc:
+            return self._handle_error(exc, start)
 
     def _handle_error(self, exc: DetectorError, start: float) -> ScanResult:
         if self._on_error == "raise":

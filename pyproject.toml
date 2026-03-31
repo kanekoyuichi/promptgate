@@ -15,8 +15,9 @@ dependencies = ["pyyaml"]
 [project.optional-dependencies]
 embedding = ["sentence-transformers"]
 llm = ["anthropic"]
-dev = ["pytest", "pytest-cov", "mypy", "ruff"]
-all = ["sentence-transformers", "anthropic"]
+llm-openai = ["openai"]
+dev = ["pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff"]
+all = ["sentence-transformers", "anthropic", "openai"]
 
 [tool.setuptools.packages.find]
 include = ["promptgate*"]
@@ -27,6 +28,9 @@ promptgate = ["patterns/*.yaml"]
 [tool.mypy]
 python_version = "3.8"
 strict = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
