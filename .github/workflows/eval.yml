@@ -1,0 +1,51 @@
+name: Evaluation
+
+# ラベル付きコーパスに対する FPR / Recall の定量評価。
+# スキャナーコードまたはコーパスの変更時、および週次で実行する。
+
+on:
+  push:
+    paths:
+      - "src/promptgate/detectors/rule_based.py"
+      - "src/promptgate/patterns/**"
+      - "src/promptgate/normalizer.py"
+      - "eval/**"
+  pull_request:
+    paths:
+      - "src/promptgate/detectors/rule_based.py"
+      - "src/promptgate/patterns/**"
+      - "src/promptgate/normalizer.py"
+      - "eval/**"
+  schedule:
+    - cron: "0 0 * * 1"  # 毎週月曜 00:00 UTC
+  workflow_dispatch:
+
+jobs:
+  eval-rule:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run evaluation
+        run: |
+          python eval/run_eval.py \
+            --detector rule \
+            --output-md eval/results/rule_based.md \
+            --fail-on-fpr 0.05 \
+            --fail-on-recall 0.50
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: eval/results/
