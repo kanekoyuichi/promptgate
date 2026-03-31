@@ -42,6 +42,7 @@ class PromptGate:
         trusted_threshold: float = 0.95,
         llm_api_key: Optional[str] = None,
         llm_model: str = "claude-haiku-4-5-20251001",
+        llm_on_error: str = "fail_open",
     ) -> None:
         if sensitivity not in _VALID_SENSITIVITIES:
             raise ConfigurationError(
@@ -85,6 +86,7 @@ class PromptGate:
                 api_key=llm_api_key,
                 model=llm_model,
                 sensitivity=sensitivity,
+                on_error=llm_on_error,
             )
 
     def add_rule(self, name: str, pattern: str, severity: str = "medium") -> None:
