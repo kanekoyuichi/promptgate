@@ -41,7 +41,7 @@ class PromptGate:
         trusted_user_ids: Optional[list[str]] = None,
         trusted_threshold: float = 0.95,
         llm_api_key: Optional[str] = None,
-        llm_model: str = "claude-haiku-4-5-20251001",
+        llm_model: Optional[str] = None,
         llm_on_error: str = "fail_open",
     ) -> None:
         if sensitivity not in _VALID_SENSITIVITIES:
@@ -63,6 +63,12 @@ class PromptGate:
         unknown = set(_detectors) - _VALID_DETECTORS
         if unknown:
             raise ConfigurationError(f"不明な検出器: {unknown}")
+        if "llm_judge" in _detectors and llm_model is None:
+            raise ConfigurationError(
+                "llm_judge 検出器を使用する場合は llm_model を指定してください。"
+                " 利用環境に合わせたモデル識別子を指定してください。"
+                " 例 (Anthropic API): llm_model='claude-haiku-4-5-20251001'"
+            )
 
         self._sensitivity = sensitivity
         self._detector_names = _detectors
