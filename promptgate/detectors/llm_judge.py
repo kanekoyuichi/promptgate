@@ -85,8 +85,8 @@ class LLMJudgeDetector(BaseDetector):
         if model is None:
             raise DetectorError(
                 "llm_judge 検出器には model の指定が必要です。"
-                " 利用環境に合わせたモデル識別子を指定してください。"
-                " 例 (Anthropic API): model='claude-haiku-4-5-20251001'"
+                " 利用プロバイダーのドキュメントを参照し、"
+                " 適切なモデル識別子を model パラメータに渡してください。"
             )
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self._model = model

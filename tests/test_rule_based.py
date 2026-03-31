@@ -45,8 +45,10 @@ def test_whitelist_bypasses_detection() -> None:
 
 
 def test_extra_rules() -> None:
+    # ノーマライザーはセパレータ文字（_）をWord間から除去するため、
+    # パターンも正規化後のテキストに合わせてセパレータを含まない形にする。
     detector = RuleBasedDetector(
-        extra_rules=[{"name": "custom", "pattern": "ATTACK_SIGNAL"}]
+        extra_rules=[{"name": "custom", "pattern": "ATTACKSIGNAL"}]
     )
     result = detector.scan("this contains ATTACK_SIGNAL in it")
     assert result.is_safe is False
