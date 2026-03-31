@@ -171,7 +171,7 @@ gate = PromptGate(
 | 検出器名 | 説明 | デフォルト | 追加依存 |
 |---------|------|----------|--------|
 | `"rule"` | 正規表現・キーワードによる高速検出 | **有効** | なし |
-| `"embedding"` | 意味的類似度による言い換え攻撃対応 | 無効 | `pip install 'promptgate[embedding]'` ⚠️ |
+| `"embedding"` | 攻撃例文との意味的類似度による検出（exemplar ベース・評価済み fine-tuned 分類器ではない） | 無効 | `pip install 'promptgate[embedding]'` ⚠️ |
 | `"llm_judge"` | LLM による高精度審査 | 無効 | LLM プロバイダーパッケージ・APIキー ⚠️ |
 
 > ⚠️ **`embedding` を有効にする前に確認してください**
