@@ -260,6 +260,29 @@ def test_promptgate_accepts_llm_provider() -> None:
     assert gate._llm_detector._provider is provider
 
 
+def test_promptgate_llm_output_detector_uses_output_scan_mode() -> None:
+    """llm_judge 有効時、出力スキャン用インスタンスが scan_mode="output" で生成される。"""
+    provider = _MockProvider(_SAFE_RESPONSE)
+    gate = PromptGate(
+        detectors=["rule", "llm_judge"],
+        llm_provider=provider,
+    )
+    assert gate._llm_output_detector is not None
+    assert gate._llm_output_detector._scan_mode == "output"
+    assert gate._llm_detector is not None
+    assert gate._llm_detector._scan_mode == "input"
+
+
+def test_promptgate_llm_detectors_share_provider() -> None:
+    """入力用と出力用の llm_judge インスタンスが同一プロバイダーを共有する。"""
+    provider = _MockProvider(_SAFE_RESPONSE)
+    gate = PromptGate(
+        detectors=["rule", "llm_judge"],
+        llm_provider=provider,
+    )
+    assert gate._llm_detector._provider is gate._llm_output_detector._provider
+
+
 def test_promptgate_llm_provider_overrides_model() -> None:
     """llm_provider が指定された場合、llm_model / llm_api_key は使われない。"""
     provider = _MockProvider(_SAFE_RESPONSE)
