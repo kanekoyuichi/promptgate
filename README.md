@@ -164,13 +164,26 @@ gate = PromptGate(
 # embedding を追加する場合（要: pip install 'promptgate[embedding]'）
 gate = PromptGate(detectors=["rule", "embedding"])
 
-# LLM-as-Judge を有効にする場合
+# LLM-as-Judge を有効にする場合（llm_model は必須・省略不可）
 gate = PromptGate(
     detectors=["rule", "embedding", "llm_judge"],
-    llm_api_key="sk-ant-...",        # または環境変数 ANTHROPIC_API_KEY
-    llm_on_error="fail_open",        # 障害時の挙動（後述）
+    llm_api_key="sk-ant-...",             # または環境変数 ANTHROPIC_API_KEY
+    llm_model="claude-haiku-4-5-20251001", # 利用環境に合わせて指定（後述）
+    llm_on_error="fail_open",             # 障害時の挙動（後述）
 )
 ```
+
+### `llm_model` の指定
+
+`llm_judge` を使用する場合は **`llm_model` の指定が必須**です。モデル識別子は利用環境によって異なります。
+
+| 利用環境 | `llm_model` の指定例 |
+|---------|-------------------|
+| Anthropic API | `"claude-haiku-4-5-20251001"` |
+| Amazon Bedrock | `"anthropic.claude-3-haiku-20240307-v1:0"` |
+| Google Vertex AI | `"claude-3-haiku@20240307"` |
+
+最新のモデル識別子は各プロバイダーのドキュメントを参照してください。ライブラリ側ではデフォルト値を持たないため、deprecation の影響を直接受けません。
 
 ### LLM 障害時のフェイルポリシー（`llm_on_error`）
 
