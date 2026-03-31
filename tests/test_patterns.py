@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-PATTERNS_DIR = Path(__file__).parent.parent / "promptgate" / "patterns"
+PATTERNS_DIR = Path(__file__).parent.parent / "src" / "promptgate" / "patterns"
 
 _INPUT_FILES = ["ja.yaml", "en.yaml"]
 _OUTPUT_FILES = ["ja_output.yaml", "en_output.yaml"]

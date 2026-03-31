@@ -20,7 +20,7 @@ dev = ["pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff"]
 all = ["sentence-transformers", "anthropic", "openai"]
 
 [tool.setuptools.packages.find]
-include = ["promptgate*"]
+where = ["src"]
 
 [tool.setuptools.package-data]
 promptgate = ["patterns/*.yaml"]
