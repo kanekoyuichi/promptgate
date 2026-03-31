@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import logging
@@ -11,6 +12,8 @@ from promptgate.detectors.embedding import EmbeddingDetector
 from promptgate.detectors.llm_judge import LLMJudgeDetector
 from promptgate.detectors.rule_based import RuleBasedDetector
 from promptgate.exceptions import ConfigurationError
+from promptgate.providers.anthropic import AnthropicProvider
+from promptgate.providers.base import LLMProvider
 from promptgate.result import ScanResult
 
 logger = logging.getLogger(__name__)
@@ -72,14 +75,18 @@ class PromptGate:
         llm_api_key: Optional[str] = None,
         llm_model: Optional[str] = None,
         llm_on_error: str = "fail_open",
+        llm_provider: Optional[LLMProvider] = None,
     ) -> None:
         """
         Args:
-            log_all: True の場合、安全と判定されたスキャンもログ記録する。
-            log_input: True の場合、入力テキストの原文をログに記録する。
+            log_all:      True の場合、安全と判定されたスキャンもログ記録する。
+            log_input:    True の場合、入力テキストの原文をログに記録する。
                 デフォルトは False（SHA-256 ハッシュのみ記録）。
                 PII を含む可能性がある入力を扱う場合は False のままにしてください。
-            tenant_id: マルチテナント環境での識別子。全ログエントリに付与される。
+            tenant_id:    マルチテナント環境での識別子。全ログエントリに付与される。
+            llm_provider: LLMProvider インスタンス。指定した場合 llm_api_key / llm_model
+                は無視される。OpenAI 等の非 Anthropic プロバイダーを使う場合に指定。
+                指定しない場合は llm_model + llm_api_key から AnthropicProvider を生成する。
         """
         if sensitivity not in _VALID_SENSITIVITIES:
             raise ConfigurationError(
@@ -104,9 +111,9 @@ class PromptGate:
         unknown = set(_detectors) - _VALID_DETECTORS
         if unknown:
             raise ConfigurationError(f"不明な検出器: {unknown}")
-        if "llm_judge" in _detectors and llm_model is None:
+        if "llm_judge" in _detectors and llm_provider is None and llm_model is None:
             raise ConfigurationError(
-                "llm_judge 検出器を使用する場合は llm_model を指定してください。"
+                "llm_judge 検出器を使用する場合は llm_provider または llm_model を指定してください。"
                 " 利用プロバイダーのドキュメントを参照し、"
                 " 適切なモデル識別子を llm_model パラメータに渡してください。"
             )
@@ -150,15 +157,39 @@ class PromptGate:
 
         self._llm_detector: Optional[LLMJudgeDetector] = None
         if "llm_judge" in _detectors:
+            resolved_provider: LLMProvider = (
+                llm_provider
+                if llm_provider is not None
+                else AnthropicProvider(api_key=llm_api_key, model=llm_model)
+            )
             self._llm_detector = LLMJudgeDetector(
-                api_key=llm_api_key,
-                model=llm_model,
+                provider=resolved_provider,
                 sensitivity=sensitivity,
                 on_error=llm_on_error,
             )
 
+    # ------------------------------------------------------------------
+    # 同期 API
+    # ------------------------------------------------------------------
+
     def add_rule(self, name: str, pattern: str, severity: str = "medium") -> None:
         self._rule_detector.add_rule(name, pattern, severity)
+
+    def warmup(self) -> None:
+        """埋め込みモデルをあらかじめメモリにロードする。
+
+        embedding 検出器が有効な場合、初回 scan() 呼び出し前にモデルをロードしておくことで
+        Lambda コールドスタートや初回リクエストの遅延を回避できる。
+
+        embedding が無効な場合は何もしない。
+
+        Example::
+
+            gate = PromptGate(detectors=["rule", "embedding"])
+            gate.warmup()  # Lambda の init フェーズや起動スクリプトで呼ぶ
+        """
+        if self._embedding_detector is not None:
+            EmbeddingDetector._load_model(self._embedding_detector._model_name)
 
     def scan(
         self,
@@ -239,6 +270,164 @@ class PromptGate:
             final=final,
         )
         return final
+
+    # ------------------------------------------------------------------
+    # 非同期 API
+    # ------------------------------------------------------------------
+
+    async def scan_async(
+        self,
+        text: str,
+        user_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> ScanResult:
+        """非同期スキャン。FastAPI / ASGI アプリでイベントループをブロックしない。
+
+        rule-based 検出はスレッドプールで実行。
+        embedding 検出はスレッドプールで実行（CPU バウンド）。
+        LLM judge 検出はプロバイダーの非同期 HTTP クライアントで実行。
+        embedding と LLM judge は asyncio.gather で並行実行する。
+
+        Example::
+
+            @app.post("/chat")
+            async def chat(request: ChatRequest):
+                result = await gate.scan_async(request.message)
+                if not result.is_safe:
+                    raise HTTPException(status_code=400, detail={"threats": result.threats})
+                return await call_llm(request.message)
+        """
+        start = time.monotonic()
+        if trace_id is None:
+            trace_id = uuid.uuid4().hex[:16]
+        is_trusted = user_id is not None and user_id in self._trusted_user_ids
+
+        per_detector: list[tuple[str, ScanResult]] = []
+
+        # rule-based: 高速・CPU バウンドのためスレッドプールで実行
+        loop = asyncio.get_running_loop()
+        rule_result = await loop.run_in_executor(None, self._rule_detector.scan, text)
+        per_detector.append(("rule", rule_result))
+
+        # embedding + LLM judge を並行実行
+        tasks: list[asyncio.Task[ScanResult]] = []
+        task_names: list[str] = []
+
+        if self._embedding_detector and self._sensitivity in ("medium", "high"):
+            tasks.append(
+                asyncio.ensure_future(self._embedding_detector.scan_async(text))
+            )
+            task_names.append("embedding")
+
+        if self._llm_detector:
+            tasks.append(
+                asyncio.ensure_future(self._llm_detector.scan_async(text))
+            )
+            task_names.append("llm_judge")
+
+        if tasks:
+            gathered = await asyncio.gather(*tasks)
+            for name, result in zip(task_names, gathered):
+                per_detector.append((name, result))
+
+        final = self._aggregate(per_detector, is_trusted=is_trusted)
+        final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
+
+        self._emit_audit_log(
+            scan_type="input",
+            text=text,
+            user_id=user_id,
+            trace_id=trace_id,
+            is_trusted=is_trusted,
+            per_detector=per_detector,
+            final=final,
+        )
+        return final
+
+    async def scan_output_async(
+        self,
+        text: str,
+        trace_id: Optional[str] = None,
+    ) -> ScanResult:
+        """非同期出力スキャン。scan_output() の非同期版。"""
+        start = time.monotonic()
+        if trace_id is None:
+            trace_id = uuid.uuid4().hex[:16]
+
+        per_detector: list[tuple[str, ScanResult]] = []
+
+        loop = asyncio.get_running_loop()
+        rule_result = await loop.run_in_executor(
+            None, self._output_rule_detector.scan, text
+        )
+        per_detector.append(("rule_output", rule_result))
+
+        if self._llm_detector:
+            llm_result = await self._llm_detector.scan_async(text)
+            per_detector.append(("llm_judge", llm_result))
+
+        final = self._aggregate(per_detector, is_trusted=False)
+        final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
+
+        self._emit_audit_log(
+            scan_type="output",
+            text=text,
+            user_id=None,
+            trace_id=trace_id,
+            is_trusted=False,
+            per_detector=per_detector,
+            final=final,
+        )
+        return final
+
+    # ------------------------------------------------------------------
+    # バッチ API
+    # ------------------------------------------------------------------
+
+    async def scan_batch_async(
+        self,
+        texts: list[str],
+        user_id: Optional[str] = None,
+        trace_id_prefix: Optional[str] = None,
+    ) -> list[ScanResult]:
+        """複数テキストを並行スキャンする。
+
+        バッチ処理・データパイプラインでのスループット向上に使用する。
+        各テキストは独立した asyncio タスクとして並行実行される。
+
+        Args:
+            texts:           スキャン対象テキストのリスト。
+            user_id:         全テキストに共通のユーザー ID（省略可）。
+            trace_id_prefix: トレース ID のプレフィックス。指定した場合
+                             "{prefix}-{index}" の形式でトレース ID が生成される。
+
+        Returns:
+            texts と同じ順序の ScanResult リスト。
+
+        Example::
+
+            results = await gate.scan_batch_async([
+                "ユーザー入力1",
+                "ユーザー入力2",
+                "ユーザー入力3",
+            ])
+            blocked = [r for r in results if not r.is_safe]
+        """
+        def _make_trace_id(i: int) -> Optional[str]:
+            if trace_id_prefix is None:
+                return None
+            return f"{trace_id_prefix}-{i}"
+
+        coros = [
+            self.scan_async(text, user_id=user_id, trace_id=_make_trace_id(i))
+            for i, text in enumerate(texts)
+        ]
+        results: list[ScanResult] = list(await asyncio.gather(*coros))
+        return results
+
+    # ------------------------------------------------------------------
+    # 内部メソッド
+    # ------------------------------------------------------------------
 
     def _emit_audit_log(
         self,
