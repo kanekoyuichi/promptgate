@@ -1,0 +1,23 @@
+system_prompt_leak:
+  - "my (?:system )?(?:prompt|instructions?) (?:is|are|says?|reads?|states?)"
+  - "I (?:was|am|have been) (?:instructed|configured|told|set up) to"
+  - "according to my (?:system )?(?:prompt|instructions?)"
+  - "(?:the )?system (?:prompt|message) (?:says?|states?|reads?|instructs?)"
+  - "my (?:initial|original) (?:instructions?|configuration) (?:is|are|says?)"
+  - "as per my (?:system )?(?:prompt|instructions?)"
+
+pii_leak:
+  - "[A-Za-z0-9._%+]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+  - "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+  - "\\b(?:\\+?1[\\s-]?)?\\(?\\d{3}\\)?[\\s-]?\\d{3}[\\s-]?\\d{4}\\b"
+  - "\\b(?:\\d{4}[\\s-]?){3}\\d{4}\\b"
+
+credential_leak:
+  - "(?i)api.?key[:\\s=]+[A-Za-z0-9_.+/-]{16,}"
+  - "(?i)access.?token[:\\s=]+[A-Za-z0-9_.+/-]{16,}"
+  - "(?i)secret.?key[:\\s=]+[A-Za-z0-9_.+/-]{16,}"
+  - "(?i)password[:\\s=]+\\S{8,}"
+  - "(?i)Bearer\\s+[A-Za-z0-9_.]{20,}"
+  - "sk-[A-Za-z0-9]{20,}"
+  - "ghp_[A-Za-z0-9]{36}"
+  - "-----BEGIN .{0,20}PRIVATE KEY-----"
