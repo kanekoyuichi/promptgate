@@ -110,7 +110,11 @@ _ATTACK_EXEMPLARS: Dict[str, list[str]] = {
 
 _DEFAULT_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
-_SENSITIVITY_THRESHOLD: dict[str, float] = {
+# コサイン類似度スペースでのカテゴリ別ブロック閾値。
+# rule_based / core の _SENSITIVITY_THRESHOLD（スコアヒューリスティック空間）とは
+# スケールが異なるため、意図的に別の値を使用している。
+# コサイン類似度は通常 0.6〜0.9 の範囲で有意な値を示す。
+_EMBEDDING_SIMILARITY_THRESHOLD: dict[str, float] = {
     "low": 0.85,
     "medium": 0.75,
     "high": 0.65,
@@ -154,7 +158,7 @@ class EmbeddingDetector(BaseDetector):
         sensitivity: str = "medium",
         model_name: str = _DEFAULT_MODEL,
     ) -> None:
-        self._threshold = _SENSITIVITY_THRESHOLD.get(sensitivity, 0.75)
+        self._threshold = _EMBEDDING_SIMILARITY_THRESHOLD.get(sensitivity, 0.75)
         self._model_name = model_name
 
     @classmethod
@@ -180,6 +184,14 @@ class EmbeddingDetector(BaseDetector):
             }
             cls._cls_models[model_name] = model
             cls._cls_embeddings[model_name] = category_embeddings
+
+    def warmup(self) -> None:
+        """埋め込みモデルをあらかじめメモリにロードする。
+
+        Lambda コールドスタートや初回リクエストの遅延を回避するために
+        起動フェーズで呼び出す。すでにロード済みの場合は何もしない。
+        """
+        EmbeddingDetector._load_model(self._model_name)
 
     def scan(self, text: str) -> ScanResult:
         start = time.monotonic()
