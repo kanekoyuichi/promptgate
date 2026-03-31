@@ -1,4 +1,4 @@
-# 🚪 PromptGate
+# PromptGate
 
 **LLMアプリケーション向けプロンプトインジェクション検出スクリーニングライブラリ**
 
@@ -77,7 +77,7 @@ gate = PromptGate()
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    # ✅ 非同期 API でイベントループをブロックしない
+    # 非同期 API でイベントループをブロックしない
     result = await gate.scan_async(request.message)
 
     if not result.is_safe:
@@ -124,7 +124,7 @@ class PromptGateMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         body = await request.json()
         if "message" in body:
-            result = await gate.scan_async(body["message"])  # ✅ 非同期
+            result = await gate.scan_async(body["message"])  # 非同期
             if not result.is_safe:
                 return JSONResponse(status_code=400, content={"error": "threat_detected"})
         return await call_next(request)
@@ -180,16 +180,16 @@ gate = PromptGate(
 | 検出器名 | 説明 | デフォルト | 追加依存 |
 |---------|------|----------|--------|
 | `"rule"` | 正規表現・フレーズマッチによる高速検出（婉曲表現・長文埋め込み・ロール移譲など回避耐性は限定的） | **有効** | なし |
-| `"embedding"` | 攻撃例文との意味的類似度による検出（exemplar ベース・評価済み fine-tuned 分類器ではない） | 無効 | `pip install 'promptgate[embedding]'` ⚠️ |
-| `"llm_judge"` | LLM による意味的審査（精度はモデル・プロンプトに依存） | 無効 | LLM プロバイダーパッケージ・APIキー ⚠️ |
+| `"embedding"` | 攻撃例文との意味的類似度による検出（exemplar ベース・評価済み fine-tuned 分類器ではない） | 無効 | `pip install 'promptgate[embedding]'` |
+| `"llm_judge"` | LLM による意味的審査（精度はモデル・プロンプトに依存） | 無効 | LLM プロバイダーパッケージ・APIキー |
 
-> ⚠️ **`embedding` を有効にする前に確認してください**
+> **`embedding` を有効にする前に確認してください**
 > - **メモリ要件**: デフォルトモデル（`paraphrase-multilingual-MiniLM-L12-v2`）は約 **120MB** のモデルファイルをロードし、実行時に **300〜400MB の RAM** を使用します
 > - **初期化時間**: 初回スキャン時にモデルをロード（遅延ロード）するため、**2〜5秒** の初期化時間が発生します
 > - コンテナや Lambda 等のリソース制限環境ではメモリ上限と初期化時間を考慮してください
 > - Lambda での遅延対策として `gate.warmup()` をコールドスタート前（init フェーズ）に呼ぶことを推奨します
 
-> ⚠️ **`llm_judge` を有効にする前に確認してください**
+> **`llm_judge` を有効にする前に確認してください**
 > - 外部 API への通信が発生します（データがサードパーティに送信されます）
 > - レイテンシが増加します（目安: +150〜300ms、API・モデルにより変動）
 > - API 呼び出しコストが発生します
