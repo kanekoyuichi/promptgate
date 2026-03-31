@@ -209,6 +209,142 @@ async def test_openai_provider_complete_async() -> None:
 
 
 # ---------------------------------------------------------------------------
+# AnthropicBedrockProvider
+# ---------------------------------------------------------------------------
+
+def test_anthropic_bedrock_provider_requires_model() -> None:
+    from promptgate.providers.anthropic_bedrock import AnthropicBedrockProvider
+
+    with pytest.raises(DetectorError, match="model"):
+        AnthropicBedrockProvider()
+
+
+def test_anthropic_bedrock_provider_complete() -> None:
+    from promptgate.providers.anthropic_bedrock import AnthropicBedrockProvider
+
+    provider = AnthropicBedrockProvider(
+        model="anthropic.claude-3-haiku-20240307-v1:0",
+        aws_region="us-east-1",
+    )
+    mock_message = MagicMock()
+    mock_message.content = [MagicMock(text='{"is_attack": false}')]
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_message
+    provider._sync_client = mock_client
+
+    result = provider.complete("system", "user")
+    assert '"is_attack"' in result
+    call_kwargs = mock_client.messages.create.call_args[1]
+    assert call_kwargs["model"] == "anthropic.claude-3-haiku-20240307-v1:0"
+
+
+def test_anthropic_bedrock_provider_aws_kwargs_passed() -> None:
+    """AWS 認証情報がクライアントコンストラクタに渡されることを確認。"""
+    from promptgate.providers.anthropic_bedrock import AnthropicBedrockProvider
+
+    mock_anthropic = MagicMock()
+    mock_anthropic.AnthropicBedrock.return_value = MagicMock()
+
+    provider = AnthropicBedrockProvider(
+        model="m",
+        aws_region="ap-northeast-1",
+        aws_access_key="AKIA...",
+        aws_secret_key="secret",
+    )
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+        provider._sync_client = None
+        provider._get_sync_client()
+        call_kwargs = mock_anthropic.AnthropicBedrock.call_args[1]
+        assert call_kwargs["aws_region"] == "ap-northeast-1"
+        assert call_kwargs["aws_access_key"] == "AKIA..."
+
+
+def test_anthropic_bedrock_provider_requires_package() -> None:
+    from promptgate.providers.anthropic_bedrock import AnthropicBedrockProvider
+
+    with patch.dict("sys.modules", {"anthropic": None}):
+        provider = AnthropicBedrockProvider(model="m")
+        with pytest.raises(DetectorError, match="anthropic"):
+            provider.complete("sys", "user")
+
+
+# ---------------------------------------------------------------------------
+# AnthropicVertexProvider
+# ---------------------------------------------------------------------------
+
+def test_anthropic_vertex_provider_requires_model() -> None:
+    from promptgate.providers.anthropic_vertex import AnthropicVertexProvider
+
+    with pytest.raises(DetectorError, match="model"):
+        AnthropicVertexProvider()
+
+
+def test_anthropic_vertex_provider_complete() -> None:
+    from promptgate.providers.anthropic_vertex import AnthropicVertexProvider
+
+    provider = AnthropicVertexProvider(
+        model="claude-3-haiku@20240307",
+        project_id="my-project",
+        region="us-east5",
+    )
+    mock_message = MagicMock()
+    mock_message.content = [MagicMock(text='{"is_attack": false}')]
+    mock_client = MagicMock()
+    mock_client.messages.create.return_value = mock_message
+    provider._sync_client = mock_client
+
+    result = provider.complete("system", "user")
+    assert '"is_attack"' in result
+    call_kwargs = mock_client.messages.create.call_args[1]
+    assert call_kwargs["model"] == "claude-3-haiku@20240307"
+
+
+def test_anthropic_vertex_provider_gcp_kwargs_passed() -> None:
+    """GCP プロジェクト情報がクライアントコンストラクタに渡されることを確認。"""
+    from promptgate.providers.anthropic_vertex import AnthropicVertexProvider
+
+    mock_anthropic = MagicMock()
+    mock_anthropic.AnthropicVertex.return_value = MagicMock()
+
+    provider = AnthropicVertexProvider(
+        model="m",
+        project_id="my-gcp-project",
+        region="us-east5",
+    )
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+        provider._sync_client = None
+        provider._get_sync_client()
+        call_kwargs = mock_anthropic.AnthropicVertex.call_args[1]
+        assert call_kwargs["project_id"] == "my-gcp-project"
+        assert call_kwargs["region"] == "us-east5"
+
+
+def test_anthropic_vertex_provider_requires_package() -> None:
+    from promptgate.providers.anthropic_vertex import AnthropicVertexProvider
+
+    with patch.dict("sys.modules", {"anthropic": None}):
+        provider = AnthropicVertexProvider(model="m")
+        with pytest.raises(DetectorError, match="anthropic"):
+            provider.complete("sys", "user")
+
+
+def test_anthropic_vertex_provider_optional_kwargs_omitted() -> None:
+    """project_id / region を省略した場合、kwargs に含まれないことを確認。"""
+    from promptgate.providers.anthropic_vertex import AnthropicVertexProvider
+
+    mock_anthropic = MagicMock()
+    mock_anthropic.AnthropicVertex.return_value = MagicMock()
+
+    provider = AnthropicVertexProvider(model="m")  # project_id / region なし
+    with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+        provider._sync_client = None
+        provider._get_sync_client()
+        call_kwargs = mock_anthropic.AnthropicVertex.call_args[1]
+        assert "project_id" not in call_kwargs
+        assert "region" not in call_kwargs
+
+
+# ---------------------------------------------------------------------------
 # プロバイダー経由の end-to-end: LLMJudgeDetector + OpenAIProvider
 # ---------------------------------------------------------------------------
 

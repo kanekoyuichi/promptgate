@@ -199,10 +199,19 @@ gate.warmup()  # モデルをメモリに展開（コールドスタート遅延
 
 ## LLM プロバイダーの設定
 
-`llm_judge` 検出器は **Anthropic と OpenAI（および互換 API）** の両方に対応しています。
-`llm_provider` パラメータで任意のプロバイダーを注入できます。
+`llm_judge` 検出器は複数の LLM バックエンドに対応しています。
+`llm_provider` パラメータにプロバイダーインスタンスを渡してください。
 
-### Anthropic（デフォルト）
+| プロバイダークラス | バックエンド | 必要パッケージ |
+|-----------------|------------|-------------|
+| `AnthropicProvider` | Anthropic API（直接接続） | `pip install anthropic` |
+| `AnthropicBedrockProvider` | Amazon Bedrock 経由で Claude | `pip install anthropic` |
+| `AnthropicVertexProvider` | Google Cloud Vertex AI 経由で Claude | `pip install anthropic` |
+| `OpenAIProvider` | OpenAI API・互換 API | `pip install openai` |
+
+### Anthropic API（直接接続）
+
+`AnthropicProvider` は **Anthropic API に直接接続**します。Bedrock / Vertex AI とは別物です。
 
 ```python
 from promptgate import PromptGate, AnthropicProvider
@@ -210,23 +219,52 @@ from promptgate import PromptGate, AnthropicProvider
 gate = PromptGate(
     detectors=["rule", "llm_judge"],
     llm_provider=AnthropicProvider(
-        model="claude-haiku-4-5-20251001",  # 最新 ID は Anthropic ドキュメント参照
-        api_key="sk-ant-...",               # または環境変数 ANTHROPIC_API_KEY
+        model="claude-haiku-4-5-20251001",
+        api_key="sk-ant-...",  # または環境変数 ANTHROPIC_API_KEY
     ),
-    llm_on_error="fail_open",
 )
 ```
 
-| 利用環境 | `model` の指定例 |
-|---------|----------------|
-| Anthropic API | `"claude-haiku-4-5-20251001"` |
-| Amazon Bedrock | `"anthropic.claude-3-haiku-20240307-v1:0"` |
-| Google Vertex AI | `"claude-3-haiku@20240307"` |
+### Amazon Bedrock
+
+`AnthropicBedrockProvider` は `anthropic.AnthropicBedrock` クライアントを使用します。
+AWS 認証は IAM ロール・環境変数（`AWS_ACCESS_KEY_ID` 等）・明示的な引数で行います。
+
+```python
+from promptgate import PromptGate, AnthropicBedrockProvider
+
+gate = PromptGate(
+    detectors=["rule", "llm_judge"],
+    llm_provider=AnthropicBedrockProvider(
+        model="anthropic.claude-3-haiku-20240307-v1:0",
+        aws_region="us-east-1",
+        # aws_access_key / aws_secret_key は省略可（IAM ロールや環境変数を使う場合）
+    ),
+)
+```
+
+### Google Cloud Vertex AI
+
+`AnthropicVertexProvider` は `anthropic.AnthropicVertex` クライアントを使用します。
+GCP 認証はアプリケーションデフォルト認証（ADC）または `google-auth` で行います。
+
+```python
+from promptgate import PromptGate, AnthropicVertexProvider
+
+gate = PromptGate(
+    detectors=["rule", "llm_judge"],
+    llm_provider=AnthropicVertexProvider(
+        model="claude-3-haiku@20240307",
+        project_id="my-gcp-project",
+        region="us-east5",
+    ),
+)
+```
 
 ### OpenAI
 
 ```bash
-pip install 'promptgate[llm-openai]'
+pip install openai
 ```
 
 ```python
@@ -235,18 +273,17 @@ from promptgate import PromptGate, OpenAIProvider
 gate = PromptGate(
     detectors=["rule", "llm_judge"],
     llm_provider=OpenAIProvider(
-        model="gpt-4o-mini",   # 最新 ID は OpenAI ドキュメント参照
-        api_key="sk-...",      # または環境変数 OPENAI_API_KEY
+        model="gpt-4o-mini",
+        api_key="sk-...",  # または環境変数 OPENAI_API_KEY
     ),
 )
 ```
 
-### OpenAI 互換 API（ローカル LLM・Azure OpenAI 等）
+### OpenAI 互換 API（Ollama・vLLM・Azure OpenAI 等）
 
 ```python
 from promptgate import PromptGate, OpenAIProvider
 
-# Ollama / vLLM 等のローカル LLM サーバー
 gate = PromptGate(
     detectors=["rule", "llm_judge"],
     llm_provider=OpenAIProvider(
@@ -259,32 +296,27 @@ gate = PromptGate(
 
 ### カスタムプロバイダー
 
-`LLMProvider` を継承することで任意の LLM バックエンドを使用できます。
+`LLMProvider` を継承することで任意のバックエンドを使用できます。
 
 ```python
 from promptgate import PromptGate, LLMProvider
 
 class MyProvider(LLMProvider):
     def complete(self, system: str, user_message: str) -> str:
-        # 任意の LLM 呼び出し
         return my_llm_api.call(system=system, user=user_message)
 
     async def complete_async(self, system: str, user_message: str) -> str:
-        # 真の非同期実装（省略した場合はスレッドプールで同期版を実行）
+        # オーバーライド省略時はスレッドプールで complete() を実行
         return await my_async_llm_api.call(system=system, user=user_message)
 
-gate = PromptGate(
-    detectors=["rule", "llm_judge"],
-    llm_provider=MyProvider(),
-)
+gate = PromptGate(detectors=["rule", "llm_judge"], llm_provider=MyProvider())
 ```
 
 ### 後方互換: `llm_model` / `llm_api_key`
 
-`llm_provider` を指定しない場合は、従来通り `llm_model` + `llm_api_key` で Anthropic プロバイダーが自動生成されます。
+`llm_provider` を指定しない場合は `llm_model` + `llm_api_key` で `AnthropicProvider`（Anthropic API 直接接続）が自動生成されます。
 
 ```python
-# 後方互換（引き続き動作します）
 gate = PromptGate(
     detectors=["rule", "llm_judge"],
     llm_api_key="sk-ant-...",
