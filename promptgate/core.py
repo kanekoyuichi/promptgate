@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
-from typing import Optional
+from typing import FrozenSet, Optional
 
 from promptgate.detectors.embedding import EmbeddingDetector
 from promptgate.detectors.llm_judge import LLMJudgeDetector
@@ -17,17 +17,21 @@ _VALID_SENSITIVITIES = {"low", "medium", "high"}
 _VALID_DETECTORS = {"rule", "embedding", "llm_judge"}
 _VALID_LANGUAGES = {"ja", "en", "auto"}
 
-_DETECTOR_WEIGHTS: dict[str, float] = {
-    "rule": 0.4,
-    "embedding": 0.35,
-    "llm_judge": 0.25,
-}
-
 _SENSITIVITY_THRESHOLD: dict[str, float] = {
     "low": 0.8,
     "medium": 0.5,
     "high": 0.3,
 }
+
+# Tier 1 即時ブロックのデフォルト対象 threat
+_DEFAULT_IMMEDIATE_BLOCK_THREATS: FrozenSet[str] = frozenset(
+    {"direct_injection", "jailbreak"}
+)
+
+# Tier 3 コンセンサスブースト: この値以上のスコアを「弱いシグナル」と見なす
+_CONSENSUS_WEAK_SIGNAL: float = 0.3
+# コンセンサスブーストの最大値
+_CONSENSUS_MAX_BOOST: float = 0.10
 
 
 class PromptGate:
@@ -40,6 +44,8 @@ class PromptGate:
         whitelist_patterns: Optional[list[str]] = None,
         trusted_user_ids: Optional[list[str]] = None,
         trusted_threshold: float = 0.95,
+        immediate_block_threats: Optional[set[str]] = None,
+        immediate_block_score: float = 0.85,
         llm_api_key: Optional[str] = None,
         llm_model: Optional[str] = None,
         llm_on_error: str = "fail_open",
@@ -56,6 +62,10 @@ class PromptGate:
             raise ConfigurationError(
                 "trusted_threshold は 0.0 より大きく 1.0 以下の値を指定してください。"
             )
+        if not (0.0 < immediate_block_score <= 1.0):
+            raise ConfigurationError(
+                "immediate_block_score は 0.0 より大きく 1.0 以下の値を指定してください。"
+            )
 
         # デフォルトは rule のみ。embedding は sentence-transformers が必要なため
         # オプション依存であり、明示的に指定した場合のみ有効にする。
@@ -66,8 +76,8 @@ class PromptGate:
         if "llm_judge" in _detectors and llm_model is None:
             raise ConfigurationError(
                 "llm_judge 検出器を使用する場合は llm_model を指定してください。"
-                " 利用環境に合わせたモデル識別子を指定してください。"
-                " 例 (Anthropic API): llm_model='claude-haiku-4-5-20251001'"
+                " 利用プロバイダーのドキュメントを参照し、"
+                " 適切なモデル識別子を llm_model パラメータに渡してください。"
             )
 
         self._sensitivity = sensitivity
@@ -77,6 +87,12 @@ class PromptGate:
         self._whitelist_patterns = whitelist_patterns or []
         self._trusted_user_ids: set[str] = set(trusted_user_ids or [])
         self._trusted_threshold = trusted_threshold
+        self._immediate_block_threats: FrozenSet[str] = (
+            frozenset(immediate_block_threats)
+            if immediate_block_threats is not None
+            else _DEFAULT_IMMEDIATE_BLOCK_THREATS
+        )
+        self._immediate_block_score = immediate_block_score
 
         self._rule_detector = RuleBasedDetector(
             sensitivity=sensitivity,
@@ -179,26 +195,62 @@ class PromptGate:
         if not results:
             return ScanResult(is_safe=True, risk_score=0.0)
 
-        total_weight = 0.0
-        weighted_score = 0.0
         all_threats: set[str] = set()
         detector_names: list[str] = []
         explanations: list[str] = []
 
         for name, result in results:
-            weight = _DETECTOR_WEIGHTS.get(name, 0.33)
-            weighted_score += result.risk_score * weight
-            total_weight += weight
             all_threats.update(result.threats)
             detector_names.append(name)
             if result.explanation:
                 explanations.append(result.explanation)
 
-        final_score = weighted_score / total_weight if total_weight > 0 else 0.0
+        # -------------------------------------------------------------------
+        # Tier 1: 即時ブロック
+        # 重大 threat かつスコアが即時ブロック閾値を超えた検出器があれば
+        # 他検出器の結果を待たずに即座にブロックする。
+        # 信頼済みユーザーは緩和閾値での評価を優先するためスキップする。
+        # -------------------------------------------------------------------
+        if not is_trusted:
+            for name, result in results:
+                triggered = set(result.threats) & self._immediate_block_threats
+                if triggered and result.risk_score >= self._immediate_block_score:
+                    triggered_str = ", ".join(sorted(triggered))
+                    return ScanResult(
+                        is_safe=False,
+                        risk_score=round(result.risk_score, 4),
+                        threats=list(all_threats),
+                        explanation=(
+                            f"[即時ブロック: {triggered_str} / score={result.risk_score:.2f}]"
+                            f" {' / '.join(explanations)}"
+                        ),
+                        detector_used="+".join(detector_names),
+                        latency_ms=0.0,
+                    )
 
-        # 信頼済みユーザーは通常閾値ではなく trusted_threshold を適用する。
-        # スキャンをスキップせず「閾値だけ緩和」することで、アカウント侵害時の
-        # blast radius を最小化しつつ監査証跡を確保する。
+        # -------------------------------------------------------------------
+        # Tier 2: 最大シグナル基準スコア
+        # 加重平均ではなく max を基底とし、強いシグナルが低スコア検出器に
+        # 希釈されることを防ぐ。
+        # -------------------------------------------------------------------
+        base_score = max(r.risk_score for _, r in results)
+
+        # -------------------------------------------------------------------
+        # Tier 3: コンセンサスブースト
+        # _CONSENSUS_WEAK_SIGNAL 以上のスコアを出した検出器が複数ある場合、
+        # 相互補強として小さいブーストを加算する。
+        # -------------------------------------------------------------------
+        flagging_count = sum(
+            1 for _, r in results if r.risk_score >= _CONSENSUS_WEAK_SIGNAL
+        )
+        consensus_boost = (
+            min(_CONSENSUS_MAX_BOOST * (flagging_count - 1), _CONSENSUS_MAX_BOOST)
+            if flagging_count > 1
+            else 0.0
+        )
+        final_score = min(base_score + consensus_boost, 1.0)
+
+        # 信頼済みユーザーは trusted_threshold、それ以外は sensitivity に応じた閾値
         threshold = (
             self._trusted_threshold
             if is_trusted
