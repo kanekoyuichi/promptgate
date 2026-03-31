@@ -150,8 +150,8 @@ gate = PromptGate(
 
 | 検出器名 | 説明 | デフォルト | 追加依存 |
 |---------|------|----------|--------|
-| `"rule"` | 正規表現・キーワードによる高速検出 | 有効 | なし |
-| `"embedding"` | 意味的類似度による言い換え攻撃対応 | 有効 | `sentence-transformers` |
+| `"rule"` | 正規表現・キーワードによる高速検出 | **有効** | なし |
+| `"embedding"` | 意味的類似度による言い換え攻撃対応 | 無効 | `pip install 'promptgate[embedding]'` |
 | `"llm_judge"` | LLM による高精度審査 | 無効 | `anthropic`・APIキー ⚠️ |
 
 > ⚠️ **`llm_judge` を有効にする前に確認してください**
@@ -161,6 +161,9 @@ gate = PromptGate(
 > - API 障害・タイムアウト時の挙動を `llm_on_error` で明示的に設定してください
 
 ```python
+# embedding を追加する場合（要: pip install 'promptgate[embedding]'）
+gate = PromptGate(detectors=["rule", "embedding"])
+
 # LLM-as-Judge を有効にする場合
 gate = PromptGate(
     detectors=["rule", "embedding", "llm_judge"],

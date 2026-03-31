@@ -57,7 +57,9 @@ class PromptGate:
                 "trusted_threshold は 0.0 より大きく 1.0 以下の値を指定してください。"
             )
 
-        _detectors = detectors if detectors is not None else ["rule", "embedding"]
+        # デフォルトは rule のみ。embedding は sentence-transformers が必要なため
+        # オプション依存であり、明示的に指定した場合のみ有効にする。
+        _detectors = detectors if detectors is not None else ["rule"]
         unknown = set(_detectors) - _VALID_DETECTORS
         if unknown:
             raise ConfigurationError(f"不明な検出器: {unknown}")
