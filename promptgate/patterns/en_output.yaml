@@ -1,16 +1,27 @@
 system_prompt_leak:
-  - "my (?:system )?(?:prompt|instructions?) (?:is|are|says?|reads?|states?)"
-  - "I (?:was|am|have been) (?:instructed|configured|told|set up) to"
-  - "according to my (?:system )?(?:prompt|instructions?)"
-  - "(?:the )?system (?:prompt|message) (?:says?|states?|reads?|instructs?)"
-  - "my (?:initial|original) (?:instructions?|configuration) (?:is|are|says?)"
-  - "as per my (?:system )?(?:prompt|instructions?)"
+  # Detects only concrete disclosure signals — NOT generic meta-references.
+  # Patterns like "I was instructed to", "according to my instructions",
+  # "as per my prompt" describe having instructions but do NOT reveal their content.
+  # We require one of: colon following reference (content is about to be dumped),
+  # explicit "here is / the following is" lead-in, "verbatim/exact" qualifier,
+  # or an active verb of disclosure (reveal, share, output, repeat).
+  - "(?i)(?:my |the )?(?:full |entire |complete |verbatim |exact )?(?:system )?(?:prompt|instructions?)\\s*(?:is|are|reads?|states?|says?)\\s*:"
+  - "(?i)(?:here (?:is|are)|the following (?:is|are)|below (?:is|are))\\s+(?:my |the )?(?:full |entire |verbatim )?(?:system )?(?:prompt|instructions?)"
+  - "(?i)(?:verbatim|exact(?:ly)?|word.for.word)\\s+(?:copy|text|content|reproduction)?\\s*(?:of\\s+)?(?:my |the )?(?:system )?(?:prompt|instructions?)"
+  - "(?i)I(?:'m| am) (?:going to |now )?(?:share|reveal|disclose|show you|output|print|repeat) (?:my |the )?(?:full |entire |verbatim )?(?:system )?(?:prompt|instructions?)"
 
 pii_leak:
-  - "[A-Za-z0-9._%+]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+  # Email — exclude common placeholder/test domains to avoid false positives
+  # in documentation examples (user@example.com, admin@test.com, etc.).
+  - "[A-Za-z0-9._%+]+@(?!(?:example|test|sample|dummy|foo|bar|localhost)\\b)[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+  # US Social Security Number — specific hyphenated format.
   - "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+  # US phone number.
   - "\\b(?:\\+?1[\\s-]?)?\\(?\\d{3}\\)?[\\s-]?\\d{3}[\\s-]?\\d{4}\\b"
-  - "\\b(?:\\d{4}[\\s-]?){3}\\d{4}\\b"
+  # Credit card — major brand prefixes + grouped digit format.
+  # Plain \d{16} and (\d{4}[\\s-]?){3}\d{4} are removed: they match tracking
+  # numbers, product codes, and other 16-digit sequences far too broadly.
+  - "\\b(?:4\\d{3}|5[1-5]\\d{2}|3[47]\\d{2}|6011)[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b"
 
 credential_leak:
   - "(?i)api.?key[:\\s=]+[A-Za-z0-9_.+/-]{16,}"

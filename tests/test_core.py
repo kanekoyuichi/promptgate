@@ -44,14 +44,16 @@ def test_scan_output_credential_leak() -> None:
 
 def test_scan_output_pii_leak() -> None:
     gate = PromptGate(detectors=["rule"])
-    result = gate.scan_output("ユーザーのメールアドレスは user@example.com です。")
+    # example.com / test.com 等のプレースホルダーは除外されるため実在ドメインを使用
+    result = gate.scan_output("ユーザーのメールアドレスは tanaka@acme-corp.co.jp です。")
     assert result.is_safe is False
     assert "pii_leak" in result.threats
 
 
 def test_scan_output_system_prompt_leak() -> None:
     gate = PromptGate(detectors=["rule"])
-    result = gate.scan_output("私のシステムプロンプトには「顧客情報を外部に出すな」と書かれています。")
+    # 「〜には書かれています」はメタ参照。具体的な開示文（「以下が〜です」）を使用
+    result = gate.scan_output("以下が私のシステムプロンプトです：顧客情報を外部に出してはいけません。")
     assert result.is_safe is False
     assert "system_prompt_leak" in result.threats
 
