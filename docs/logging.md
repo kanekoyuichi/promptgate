@@ -1,79 +1,78 @@
-# ログ
+# Logging
 
-PromptGate のログは2種類あります。
+PromptGate produces two types of logs.
 
-- **監査ログ**: スキャン結果を記録する。本番運用での追跡・監視に使用する
-- **内部警告ログ**: パターン読み込みや LLM API のエラーを記録する
+- **Audit logs**: Records scan results. Used for tracing and monitoring in production.
+- **Internal warning logs**: Records errors from pattern loading and LLM API calls.
 
-どちらも Python 標準の `logging` モジュールを使用しており、既存のログ設定に統合できます。
+Both use Python's standard `logging` module and can be integrated with existing logging configurations.
 
 ---
 
-## 監査ログ
+## Audit logs
 
-### 出力タイミングとログレベル
+### When logs are emitted and at what level
 
-| 条件 | ログレベル |
-|---|---|
-| `is_safe=False`（ブロック） | `WARNING` |
-| `is_safe=True` かつ `log_all=True` | `INFO` |
-| `is_safe=True` かつ信頼済みユーザー | `INFO` |
-| 上記以外（通過・通常ユーザー） | 出力しない |
+| Condition | Log level |
+|-----------|-----------|
+| `is_safe=False` (blocked) | `WARNING` |
+| `is_safe=True` and `log_all=True` | `INFO` |
+| `is_safe=True` and trusted user | `INFO` |
+| All other cases (pass, normal user) | Not emitted |
 
-デフォルトでは**ブロック時のみ**ログが出ます。
+By default, logs are only emitted **when a request is blocked**.
 
-### メッセージ形式
+### Message format
 
 ```
 promptgate.scan verdict=BLOCKED trace_id=abc123 scan_type=input input_hash=d4d10baf risk_score=0.9500 threats=['direct_injection']
 ```
 
-### extra フィールド
+### Extra fields
 
-`logging.Handler` の `LogRecord` に付加される構造化データです。
-JSON ハンドラや外部ログサービスと組み合わせることで機械可読な監査証跡として利用できます。
+Structured data attached to the `LogRecord` for `logging.Handler`. Combined with a JSON handler or external logging service, this provides a machine-readable audit trail.
 
-| フィールド | 型 | 内容 |
-|---|---|---|
-| `trace_id` | `str` | リクエスト追跡 ID（未指定時は自動生成 UUID） |
-| `tenant_id` | `str \| None` | `PromptGate(tenant_id=...)` で設定したテナント識別子 |
-| `scan_type` | `str` | `"input"` または `"output"` |
-| `input_hash` | `str` | 入力テキストの SHA-256 先頭16桁（本文は含まない） |
-| `input_length` | `int` | 入力文字数 |
-| `user_id` | `str \| None` | `scan(text, user_id=...)` で渡したユーザー ID |
-| `is_trusted` | `bool` | 信頼済みユーザーフラグ |
-| `is_safe` | `bool` | 最終判定 |
-| `risk_score` | `float` | 最終スコア（0.0〜1.0） |
-| `threats` | `list[str]` | 検出された脅威カテゴリのリスト |
-| `detector_scores` | `dict[str, float]` | スキャナー別スコア（例: `{"rule": 0.9}`） |
-| `rule_hits` | `list[str]` | ルールスキャナーがヒットした脅威タイプ |
-| `latency_ms` | `float` | スキャン全体の処理時間（ms） |
-| `input_text` | `str` | 入力テキスト原文（`log_input=True` 時のみ付与） |
+| Field | Type | Description |
+|-------|------|-------------|
+| `trace_id` | `str` | Request trace ID (auto-generated UUID if not provided) |
+| `tenant_id` | `str \| None` | Tenant identifier set via `PromptGate(tenant_id=...)` |
+| `scan_type` | `str` | `"input"` or `"output"` |
+| `input_hash` | `str` | First 16 hex digits of SHA-256 of the input text (raw text not included) |
+| `input_length` | `int` | Number of characters in the input |
+| `user_id` | `str \| None` | User ID passed via `scan(text, user_id=...)` |
+| `is_trusted` | `bool` | Whether the user is in the trusted users list |
+| `is_safe` | `bool` | Final verdict |
+| `risk_score` | `float` | Final risk score (0.0 to 1.0) |
+| `threats` | `list[str]` | List of detected threat categories |
+| `detector_scores` | `dict[str, float]` | Per-scanner scores (e.g. `{"rule": 0.9}`) |
+| `rule_hits` | `list[str]` | Threat types matched by the rule scanner |
+| `latency_ms` | `float` | Total scan processing time (ms) |
+| `input_text` | `str` | Raw input text (only included when `log_input=True`) |
 
-### 設定オプション
+### Configuration options
 
 ```python
 gate = PromptGate(
-    log_all=True,       # 通過判定もすべてログに記録（デフォルト: False）
-    log_input=True,     # 入力テキスト原文を extra に含める（デフォルト: False）
-    tenant_id="app-1",  # テナント識別子を全ログに付与
+    log_all=True,       # Log all results including safe ones (default: False)
+    log_input=True,     # Include raw input text in log extras (default: False)
+    tenant_id="app-1",  # Attach tenant identifier to all log entries
 )
 ```
 
-> **`log_input=True` について**: 入力テキスト原文がそのままログに記録されます。
-> 個人情報や機密情報を含む入力が流れる環境では、ログの保管・アクセス制御を適切に設定してください。
+> **On `log_input=True`**: The raw input text is recorded in the log as-is.
+> In environments where inputs may contain personal or sensitive information, ensure appropriate log storage and access controls are in place.
 
-### trace_id の指定
+### Specifying a trace_id
 
-`scan()` / `scan_async()` に `trace_id` を渡すと、アプリケーション側のリクエスト ID と紐付けられます。
+Pass `trace_id` to `scan()` / `scan_async()` to correlate logs with your application's request IDs.
 
 ```python
 result = gate.scan(user_input, trace_id=request.headers.get("X-Request-ID"))
 ```
 
-### 構造化ログへの接続
+### Connecting to structured logging
 
-`extra` フィールドは `LogRecord` の属性として渡されるため、カスタムハンドラで参照できます。
+The `extra` fields are passed as attributes on the `LogRecord` and can be accessed in custom handlers.
 
 ```python
 import logging
@@ -95,7 +94,7 @@ class JsonHandler(logging.StreamHandler):
 logging.getLogger("promptgate.core").addHandler(JsonHandler())
 ```
 
-出力例:
+Example output:
 
 ```json
 {
@@ -112,35 +111,35 @@ logging.getLogger("promptgate.core").addHandler(JsonHandler())
 
 ---
 
-## 内部警告ログ
+## Internal warning logs
 
-ライブラリの動作上の問題を `WARNING` で出力します。監査ログとは別の用途です。
+Operational issues within the library are emitted at `WARNING` level. These are separate from audit logs.
 
-| ロガー名 | 発生条件 |
-|---|---|
-| `promptgate.detectors.rule_based` | YAML パターンのコンパイル失敗、空文字列マッチパターンの拒否、`add_rule()` でのバリデーション失敗 |
-| `promptgate.detectors.llm_judge` | LLM API エラー（`llm_on_error` の設定に従い処理を継続） |
+| Logger name | Emitted when |
+|-------------|-------------|
+| `promptgate.detectors.rule_based` | YAML pattern compilation failure, rejection of empty-string match patterns, validation failure in `add_rule()` |
+| `promptgate.detectors.llm_judge` | LLM API errors (processing continues according to the `llm_on_error` setting) |
 
-これらのログが出た場合、設定ミスや外部サービスの障害を示している可能性があります。
+When these logs appear, they may indicate a misconfiguration or an external service failure.
 
 ---
 
-## ロガー名の一覧
+## Logger name reference
 
-| ロガー名 | 用途 |
-|---|---|
-| `promptgate.core` | 監査ログ |
-| `promptgate.detectors.rule_based` | ルールスキャナーの内部警告 |
-| `promptgate.detectors.llm_judge` | LLM スキャナーの内部警告 |
+| Logger name | Purpose |
+|-------------|---------|
+| `promptgate.core` | Audit logs |
+| `promptgate.detectors.rule_based` | Rule scanner internal warnings |
+| `promptgate.detectors.llm_judge` | LLM scanner internal warnings |
 
-特定のロガーだけを有効にしたい場合:
+To enable only specific loggers:
 
 ```python
 import logging
 
-# 監査ログのみ WARNING 以上を出力
+# Emit WARNING and above for audit logs only
 logging.getLogger("promptgate.core").setLevel(logging.WARNING)
 
-# 内部警告ログを無効化
+# Suppress internal warning logs
 logging.getLogger("promptgate.detectors").setLevel(logging.ERROR)
 ```
