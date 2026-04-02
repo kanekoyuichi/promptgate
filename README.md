@@ -78,6 +78,8 @@ pip install promptgate[embedding]
 
 ## Quick start
 
+For a complete walkthrough covering installation, framework integration, and configuration options, see [docs/getting-started.md](docs/getting-started.md).
+
 ```python
 from promptgate import PromptGate
 

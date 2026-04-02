@@ -56,6 +56,8 @@ pip install promptgate
 
 ## クイックスタート
 
+インストールからフレームワーク組み込み・各種設定まで詳しくは [docs/getting-started.ja.md](docs/getting-started.ja.md) を参照してください。
+
 ```python
 from promptgate import PromptGate
 
