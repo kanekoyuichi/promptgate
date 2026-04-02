@@ -90,19 +90,19 @@ class PromptGate:
         """
         if sensitivity not in _VALID_SENSITIVITIES:
             raise ConfigurationError(
-                f"sensitivity は {_VALID_SENSITIVITIES} のいずれかを指定してください。"
+                f"sensitivity must be one of {_VALID_SENSITIVITIES}."
             )
         if language not in _VALID_LANGUAGES:
             raise ConfigurationError(
-                f"language は {_VALID_LANGUAGES} のいずれかを指定してください。"
+                f"language must be one of {_VALID_LANGUAGES}."
             )
         if not (0.0 < trusted_threshold <= 1.0):
             raise ConfigurationError(
-                "trusted_threshold は 0.0 より大きく 1.0 以下の値を指定してください。"
+                "trusted_threshold must be greater than 0.0 and at most 1.0."
             )
         if not (0.0 < immediate_block_score <= 1.0):
             raise ConfigurationError(
-                "immediate_block_score は 0.0 より大きく 1.0 以下の値を指定してください。"
+                "immediate_block_score must be greater than 0.0 and at most 1.0."
             )
 
         # デフォルトは rule のみ。embedding は sentence-transformers が必要なため
@@ -110,12 +110,12 @@ class PromptGate:
         _detectors = detectors if detectors is not None else ["rule"]
         unknown = set(_detectors) - _VALID_DETECTORS
         if unknown:
-            raise ConfigurationError(f"不明な検出器: {unknown}")
+            raise ConfigurationError(f"Unknown detector(s): {unknown}")
         if "llm_judge" in _detectors and llm_provider is None and llm_model is None:
             raise ConfigurationError(
-                "llm_judge 検出器を使用する場合は llm_provider または llm_model を指定してください。"
-                " 利用プロバイダーのドキュメントを参照し、"
-                " 適切なモデル識別子を llm_model パラメータに渡してください。"
+                "llm_judge detector requires either llm_provider or llm_model."
+                " Refer to your provider's documentation and pass the appropriate"
+                " model identifier via the llm_model parameter."
             )
 
         self._sensitivity = sensitivity
@@ -580,7 +580,7 @@ class PromptGate:
                         risk_score=round(result.risk_score, 4),
                         threats=list(all_threats),
                         explanation=(
-                            f"[即時ブロック: {triggered_str} / score={result.risk_score:.2f}]"
+                            f"[immediate block: {triggered_str} / score={result.risk_score:.2f}]"
                             f" {' / '.join(explanations)}"
                         ),
                         detector_used="+".join(detector_names),
@@ -636,7 +636,7 @@ class PromptGate:
 
         if is_trusted and explanations:
             explanations.append(
-                f"(信頼済みユーザー: 緩和閾値 {self._trusted_threshold} 適用)"
+                f"(trusted user: relaxed threshold {self._trusted_threshold} applied)"
             )
 
         return ScanResult(

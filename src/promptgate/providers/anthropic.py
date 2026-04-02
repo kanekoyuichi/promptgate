@@ -41,9 +41,9 @@ class AnthropicProvider(LLMProvider):
     ) -> None:
         if model is None:
             raise DetectorError(
-                "AnthropicProvider には model の指定が必要です。"
-                " 最新のモデル ID は Anthropic ドキュメントを参照してください。"
-                " 例: 'claude-haiku-4-5-20251001'"
+                "AnthropicProvider requires a model identifier."
+                " See the Anthropic documentation for the latest model IDs."
+                " Example: 'claude-haiku-4-5-20251001'"
             )
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self._model = model
@@ -57,8 +57,8 @@ class AnthropicProvider(LLMProvider):
             import anthropic
         except ImportError as e:
             raise DetectorError(
-                "AnthropicProvider には anthropic パッケージが必要です。"
-                " pip install anthropic でインストールしてください。"
+                "AnthropicProvider requires the anthropic package."
+                " Install it with: pip install anthropic"
             ) from e
         self._sync_client = anthropic.Anthropic(api_key=self._api_key)
         return self._sync_client
@@ -70,8 +70,8 @@ class AnthropicProvider(LLMProvider):
             import anthropic
         except ImportError as e:
             raise DetectorError(
-                "AnthropicProvider には anthropic パッケージが必要です。"
-                " pip install anthropic でインストールしてください。"
+                "AnthropicProvider requires the anthropic package."
+                " Install it with: pip install anthropic"
             ) from e
         self._async_client = anthropic.AsyncAnthropic(api_key=self._api_key)
         return self._async_client
@@ -88,7 +88,7 @@ class AnthropicProvider(LLMProvider):
             )
             return message.content[0].text.strip()
         except Exception as e:
-            raise DetectorError(f"Anthropic API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"Anthropic API call failed: {e}") from e
 
     async def complete_async(self, system: str, user_message: str) -> str:
         client = self._get_async_client()
@@ -102,4 +102,4 @@ class AnthropicProvider(LLMProvider):
             )
             return message.content[0].text.strip()
         except Exception as e:
-            raise DetectorError(f"Anthropic API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"Anthropic API call failed: {e}") from e

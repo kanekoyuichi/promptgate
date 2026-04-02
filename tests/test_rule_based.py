@@ -297,5 +297,5 @@ def test_missing_pattern_file_raises_detector_error() -> None:
     from promptgate.exceptions import DetectorError
 
     with patch.object(rb_module, "_PATTERNS_DIR", Path("/nonexistent/__promptgate__")):
-        with pytest.raises(DetectorError, match="パターンファイルが見つかりません"):
+        with pytest.raises(DetectorError, match="Pattern file not found"):
             RuleBasedDetector(language="ja")

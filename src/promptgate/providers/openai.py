@@ -53,8 +53,8 @@ class OpenAIProvider(LLMProvider):
     ) -> None:
         if model is None:
             raise DetectorError(
-                "OpenAIProvider には model の指定が必要です。"
-                " 例: 'gpt-4o-mini', 'gpt-4o'"
+                "OpenAIProvider requires a model identifier."
+                " Example: 'gpt-4o-mini', 'gpt-4o'"
             )
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         self._model = model
@@ -68,8 +68,8 @@ class OpenAIProvider(LLMProvider):
             return openai
         except ImportError as e:
             raise DetectorError(
-                "OpenAIProvider には openai パッケージが必要です。"
-                " pip install openai でインストールしてください。"
+                "OpenAIProvider requires the openai package."
+                " Install it with: pip install openai"
             ) from e
 
     def _get_sync_client(self) -> openai_module.OpenAI:
@@ -106,12 +106,12 @@ class OpenAIProvider(LLMProvider):
             )
             content = response.choices[0].message.content
             if content is None:
-                raise DetectorError("OpenAI API が空のレスポンスを返しました。")
+                raise DetectorError("OpenAI API returned an empty response.")
             return content.strip()
         except DetectorError:
             raise
         except Exception as e:
-            raise DetectorError(f"OpenAI API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"OpenAI API call failed: {e}") from e
 
     async def complete_async(self, system: str, user_message: str) -> str:
         client = self._get_async_client()
@@ -127,9 +127,9 @@ class OpenAIProvider(LLMProvider):
             )
             content = response.choices[0].message.content
             if content is None:
-                raise DetectorError("OpenAI API が空のレスポンスを返しました。")
+                raise DetectorError("OpenAI API returned an empty response.")
             return content.strip()
         except DetectorError:
             raise
         except Exception as e:
-            raise DetectorError(f"OpenAI API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"OpenAI API call failed: {e}") from e

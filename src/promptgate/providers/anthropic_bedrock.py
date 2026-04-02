@@ -50,9 +50,9 @@ class AnthropicBedrockProvider(LLMProvider):
     ) -> None:
         if model is None:
             raise DetectorError(
-                "AnthropicBedrockProvider には model の指定が必要です。"
-                " 例: 'anthropic.claude-3-haiku-20240307-v1:0'"
-                " 最新の ID は AWS ドキュメントを参照してください。"
+                "AnthropicBedrockProvider requires a model identifier."
+                " Example: 'anthropic.claude-3-haiku-20240307-v1:0'"
+                " See the AWS documentation for the latest model IDs."
             )
         self._model = model
         self._aws_region = aws_region
@@ -81,8 +81,8 @@ class AnthropicBedrockProvider(LLMProvider):
             import anthropic
         except ImportError as e:
             raise DetectorError(
-                "AnthropicBedrockProvider には anthropic パッケージが必要です。"
-                " pip install anthropic でインストールしてください。"
+                "AnthropicBedrockProvider requires the anthropic package."
+                " Install it with: pip install anthropic"
             ) from e
         self._sync_client = anthropic.AnthropicBedrock(**self._client_kwargs())  # type: ignore[arg-type]
         return self._sync_client
@@ -94,8 +94,8 @@ class AnthropicBedrockProvider(LLMProvider):
             import anthropic
         except ImportError as e:
             raise DetectorError(
-                "AnthropicBedrockProvider には anthropic パッケージが必要です。"
-                " pip install anthropic でインストールしてください。"
+                "AnthropicBedrockProvider requires the anthropic package."
+                " Install it with: pip install anthropic"
             ) from e
         self._async_client = anthropic.AsyncAnthropicBedrock(**self._client_kwargs())  # type: ignore[arg-type]
         return self._async_client
@@ -112,7 +112,7 @@ class AnthropicBedrockProvider(LLMProvider):
             )
             return message.content[0].text.strip()
         except Exception as e:
-            raise DetectorError(f"Anthropic Bedrock API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"Anthropic Bedrock API call failed: {e}") from e
 
     async def complete_async(self, system: str, user_message: str) -> str:
         client = self._get_async_client()
@@ -126,4 +126,4 @@ class AnthropicBedrockProvider(LLMProvider):
             )
             return message.content[0].text.strip()
         except Exception as e:
-            raise DetectorError(f"Anthropic Bedrock API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"Anthropic Bedrock API call failed: {e}") from e
