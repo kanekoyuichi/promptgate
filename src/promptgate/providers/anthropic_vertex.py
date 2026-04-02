@@ -48,9 +48,9 @@ class AnthropicVertexProvider(LLMProvider):
     ) -> None:
         if model is None:
             raise DetectorError(
-                "AnthropicVertexProvider には model の指定が必要です。"
-                " 例: 'claude-3-haiku@20240307'"
-                " 最新の ID は Google Cloud ドキュメントを参照してください。"
+                "AnthropicVertexProvider requires a model identifier."
+                " Example: 'claude-3-haiku@20240307'"
+                " See the Google Cloud documentation for the latest model IDs."
             )
         self._model = model
         self._project_id = project_id
@@ -73,8 +73,8 @@ class AnthropicVertexProvider(LLMProvider):
             import anthropic
         except ImportError as e:
             raise DetectorError(
-                "AnthropicVertexProvider には anthropic パッケージが必要です。"
-                " pip install anthropic でインストールしてください。"
+                "AnthropicVertexProvider requires the anthropic package."
+                " Install it with: pip install anthropic"
             ) from e
         self._sync_client = anthropic.AnthropicVertex(**self._client_kwargs())  # type: ignore[arg-type]
         return self._sync_client
@@ -86,8 +86,8 @@ class AnthropicVertexProvider(LLMProvider):
             import anthropic
         except ImportError as e:
             raise DetectorError(
-                "AnthropicVertexProvider には anthropic パッケージが必要です。"
-                " pip install anthropic でインストールしてください。"
+                "AnthropicVertexProvider requires the anthropic package."
+                " Install it with: pip install anthropic"
             ) from e
         self._async_client = anthropic.AsyncAnthropicVertex(**self._client_kwargs())  # type: ignore[arg-type]
         return self._async_client
@@ -104,7 +104,7 @@ class AnthropicVertexProvider(LLMProvider):
             )
             return message.content[0].text.strip()
         except Exception as e:
-            raise DetectorError(f"Anthropic Vertex AI API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"Anthropic Vertex AI API call failed: {e}") from e
 
     async def complete_async(self, system: str, user_message: str) -> str:
         client = self._get_async_client()
@@ -118,4 +118,4 @@ class AnthropicVertexProvider(LLMProvider):
             )
             return message.content[0].text.strip()
         except Exception as e:
-            raise DetectorError(f"Anthropic Vertex AI API 呼び出しに失敗しました: {e}") from e
+            raise DetectorError(f"Anthropic Vertex AI API call failed: {e}") from e

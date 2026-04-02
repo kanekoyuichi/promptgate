@@ -68,18 +68,18 @@ def _load_patterns(language: str, scan_mode: str = "input") -> dict[str, list[st
     for lang in langs:
         path = _PATTERNS_DIR / f"{lang}{suffix}.yaml"
         if not path.exists():
-            raise DetectorError(f"パターンファイルが見つかりません: {path}")
+            raise DetectorError(f"Pattern file not found: {path}")
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         if not isinstance(data, dict):
-            raise DetectorError(f"パターンファイルの形式が不正です: {path}")
+            raise DetectorError(f"Invalid pattern file format: {path}")
         for threat, patterns in data.items():
             if not isinstance(patterns, list):
                 continue
             for p in patterns:
                 if not isinstance(p, str) or not p.strip():
                     logger.warning(
-                        "空または不正なパターンをスキップします: threat=%s, value=%r",
+                        "Skipping empty or invalid pattern: threat=%s, value=%r",
                         threat,
                         p,
                     )
@@ -88,7 +88,7 @@ def _load_patterns(language: str, scan_mode: str = "input") -> dict[str, list[st
                     compiled = re.compile(p, re.IGNORECASE)
                 except re.error as e:
                     logger.warning(
-                        "パターンのコンパイルに失敗しました: threat=%s, pattern=%r, error=%s",
+                        "Failed to compile pattern: threat=%s, pattern=%r, error=%s",
                         threat,
                         p,
                         e,
@@ -96,7 +96,7 @@ def _load_patterns(language: str, scan_mode: str = "input") -> dict[str, list[st
                     continue
                 if not _is_safe_pattern(compiled):
                     logger.warning(
-                        "空文字列にマッチするパターンを拒否しました: threat=%s, pattern=%r",
+                        "Rejected pattern matching empty string: threat=%s, pattern=%r",
                         threat,
                         p,
                     )
@@ -168,7 +168,7 @@ class RuleBasedDetector(BaseDetector):
                     c = re.compile(pattern, re.IGNORECASE)
                 except re.error as e:
                     logger.warning(
-                        "パターンのコンパイルに失敗しました (threat=%s, pattern=%r): %s",
+                        "Failed to compile pattern (threat=%s, pattern=%r): %s",
                         threat,
                         pattern,
                         e,
@@ -176,7 +176,7 @@ class RuleBasedDetector(BaseDetector):
                     continue
                 if not _is_safe_pattern(c):
                     logger.warning(
-                        "空文字列にマッチするパターンをスキップします: threat=%s, pattern=%r",
+                        "Skipping pattern matching empty string: threat=%s, pattern=%r",
                         threat,
                         pattern,
                     )
@@ -192,7 +192,7 @@ class RuleBasedDetector(BaseDetector):
             compiled = re.compile(pattern, re.IGNORECASE)
         except re.error as e:
             logger.warning(
-                "追加ルールのコンパイルに失敗しました (name=%s, pattern=%r): %s",
+                "Failed to compile custom rule (name=%s, pattern=%r): %s",
                 name,
                 pattern,
                 e,
@@ -200,7 +200,7 @@ class RuleBasedDetector(BaseDetector):
             return
         if not _is_safe_pattern(compiled):
             logger.warning(
-                "空文字列にマッチするパターンを拒否しました (name=%s, pattern=%r)",
+                "Rejected custom rule matching empty string (name=%s, pattern=%r)",
                 name,
                 pattern,
             )
@@ -224,7 +224,7 @@ class RuleBasedDetector(BaseDetector):
                         break
                 except re.error as e:
                     logger.warning(
-                        "パターンの実行中にエラーが発生しました (threat=%s): %s",
+                        "Error during pattern match (threat=%s): %s",
                         threat,
                         e,
                     )
@@ -250,16 +250,16 @@ class RuleBasedDetector(BaseDetector):
                 is_safe=True,
                 risk_score=0.0,
                 threats=[],
-                explanation="ホワイトリストパターンに一致しました。",
+                explanation="Matched a whitelist pattern.",
                 detector_used="rule_based",
                 latency_ms=(time.monotonic() - start) * 1000,
             )
 
         is_safe = final_score < self._threshold
         explanation = (
-            f"以下の脅威が検出されました: {', '.join(detected_unique)}"
+            f"Threats detected: {', '.join(detected_unique)}"
             if detected_unique
-            else "脅威は検出されませんでした。"
+            else "No threats detected."
         )
 
         return ScanResult(

@@ -151,7 +151,7 @@ def test_openai_provider_complete_null_content() -> None:
     mock_client.chat.completions.create.return_value = mock_response
     provider._sync_client = mock_client
 
-    with pytest.raises(DetectorError, match="空のレスポンス"):
+    with pytest.raises(DetectorError, match="empty response"):
         provider.complete("system", "user")
 
 

@@ -173,8 +173,8 @@ class EmbeddingDetector(BaseDetector):
                 from sentence_transformers import SentenceTransformer
             except ImportError as e:
                 raise DetectorError(
-                    "EmbeddingDetector には sentence-transformers が必要です。"
-                    " pip install 'promptgate[embedding]' でインストールしてください。"
+                    "EmbeddingDetector requires sentence-transformers."
+                    " Install it with: pip install 'promptgate[embedding]'"
                 ) from e
 
             model = SentenceTransformer(model_name)
@@ -231,14 +231,14 @@ class EmbeddingDetector(BaseDetector):
                 f"{cat}={category_scores[cat]:.2f}" for cat in threats
             )
             explanation = (
-                f"埋め込み類似度が閾値 {self._threshold} を超えました。"
-                f" 検出カテゴリ: {detail}"
+                f"Embedding similarity exceeded threshold {self._threshold}."
+                f" Detected categories: {detail}"
             )
         else:
             top_cat = max(category_scores, key=lambda c: category_scores[c])
             explanation = (
-                f"埋め込み類似度 {max_score:.2f}"
-                f"（最高カテゴリ: {top_cat}）は閾値以下です。"
+                f"Embedding similarity {max_score:.2f}"
+                f" (top category: {top_cat}) is below threshold."
             )
 
         return ScanResult(
