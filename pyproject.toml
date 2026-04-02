@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptgate"
-version = "0.1.0"
+version = "0.2.0"
 description = "LLMアプリケーション向けプロンプトインジェクション検出ライブラリ"
 readme = "README.md"
 license = { text = "MIT" }
