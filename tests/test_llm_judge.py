@@ -305,3 +305,47 @@ async def test_llm_judge_scan_async_fail_close() -> None:
     result = await detector.scan_async("test")
     assert result.is_safe is False
     assert "llm_judge_error" in result.threats
+
+
+# ---------------------------------------------------------------------------
+# sensitivity による閾値制御
+# ---------------------------------------------------------------------------
+
+def test_sensitivity_medium_blocks_at_0_5() -> None:
+    # risk_score=0.5 は medium (threshold=0.5) でブロック
+    provider = _MockProvider(
+        {"is_attack": True, "threats": ["jailbreak"], "risk_score": 0.5, "reason": "test"}
+    )
+    detector = LLMJudgeDetector(provider=provider, sensitivity="medium")
+    result = detector.scan("test")
+    assert result.is_safe is False
+
+
+def test_sensitivity_low_passes_at_0_5() -> None:
+    # risk_score=0.5 は low (threshold=0.7) では通過
+    provider = _MockProvider(
+        {"is_attack": True, "threats": ["jailbreak"], "risk_score": 0.5, "reason": "test"}
+    )
+    detector = LLMJudgeDetector(provider=provider, sensitivity="low")
+    result = detector.scan("test")
+    assert result.is_safe is True
+
+
+def test_sensitivity_high_blocks_at_0_3() -> None:
+    # risk_score=0.3 は high (threshold=0.3) でブロック
+    provider = _MockProvider(
+        {"is_attack": True, "threats": ["jailbreak"], "risk_score": 0.3, "reason": "test"}
+    )
+    detector = LLMJudgeDetector(provider=provider, sensitivity="high")
+    result = detector.scan("test")
+    assert result.is_safe is False
+
+
+def test_sensitivity_high_passes_below_0_3() -> None:
+    # risk_score=0.29 は high でも通過
+    provider = _MockProvider(
+        {"is_attack": False, "threats": [], "risk_score": 0.29, "reason": "test"}
+    )
+    detector = LLMJudgeDetector(provider=provider, sensitivity="high")
+    result = detector.scan("test")
+    assert result.is_safe is True
