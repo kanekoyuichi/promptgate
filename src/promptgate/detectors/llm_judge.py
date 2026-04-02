@@ -45,6 +45,14 @@ Respond only in the following JSON format (no additional text):
 _VALID_SCAN_MODES = {"input", "output"}
 _VALID_ON_ERROR = {"fail_open", "fail_close", "raise"}
 
+# Threshold applied to risk_score returned by the LLM.
+# Inputs with risk_score >= threshold are marked as unsafe.
+_LLM_SENSITIVITY_THRESHOLD: dict[str, float] = {
+    "low": 0.7,
+    "medium": 0.5,
+    "high": 0.3,
+}
+
 
 def _extract_json(raw: str) -> dict[str, Any]:
     """LLM の応答テキストから JSON オブジェクトを段階的に抽出する。
@@ -119,7 +127,8 @@ class LLMJudgeDetector(BaseDetector):
         api_key:    Anthropic API キー（provider 未指定時）。
         model:      モデル識別子（provider 未指定時・必須）。
         scan_mode:  "input" または "output"。system prompt の選択に使用。
-        sensitivity: 感度レベル（将来の拡張のために予約）。
+        sensitivity: 感度レベル ("low" / "medium" / "high")。LLM が返す risk_score の
+            閾値に反映される (low=0.7, medium=0.5, high=0.3)。
         on_error:   API 障害・JSON 解析失敗など例外発生時の挙動。
             "fail_open"  - is_safe=True を返す（可用性優先・デフォルト）
             "fail_close" - is_safe=False を返す（セキュリティ優先）
@@ -182,8 +191,9 @@ class LLMJudgeDetector(BaseDetector):
         try:
             raw = self._provider.complete(self._system_prompt, text)
             result = _parse_response(raw)
+            threshold = _LLM_SENSITIVITY_THRESHOLD.get(self._sensitivity, 0.5)
             return ScanResult(
-                is_safe=result.is_safe,
+                is_safe=result.risk_score < threshold,
                 risk_score=result.risk_score,
                 threats=result.threats,
                 explanation=result.explanation,
@@ -199,8 +209,9 @@ class LLMJudgeDetector(BaseDetector):
         try:
             raw = await self._provider.complete_async(self._system_prompt, text)
             result = _parse_response(raw)
+            threshold = _LLM_SENSITIVITY_THRESHOLD.get(self._sensitivity, 0.5)
             return ScanResult(
-                is_safe=result.is_safe,
+                is_safe=result.risk_score < threshold,
                 risk_score=result.risk_score,
                 threats=result.threats,
                 explanation=result.explanation,
