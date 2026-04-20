@@ -1,0 +1,13 @@
+{
+  "name": "ClassifierDetector",
+  "detection_rate": 0.76,
+  "specificity": 0.99,
+  "precision": 0.987,
+  "f1": 0.8588,
+  "accuracy": 0.875,
+  "avg_ms": 165.4,
+  "tp": 76,
+  "fp": 1,
+  "tn": 99,
+  "fn": 24
+}
