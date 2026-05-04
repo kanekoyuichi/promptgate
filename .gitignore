@@ -67,3 +67,5 @@ secrets.yaml
 .DS_Store
 Thumbs.db
 .claude/
+.codex/
+.agents/
