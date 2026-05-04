@@ -33,6 +33,7 @@ ENV/
 coverage.xml
 htmlcov/
 .tox/
+reports/
 
 # ─────────────────────────────────────────
 # 型チェック
