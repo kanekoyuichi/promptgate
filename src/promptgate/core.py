@@ -8,6 +8,7 @@ import time
 import uuid
 from typing import FrozenSet, Optional
 
+from promptgate.detectors.classifier import ClassifierDetector
 from promptgate.detectors.embedding import EmbeddingDetector
 from promptgate.detectors.llm_judge import LLMJudgeDetector
 from promptgate.detectors.rule_based import RuleBasedDetector
@@ -19,7 +20,7 @@ from promptgate.result import ScanResult
 logger = logging.getLogger(__name__)
 
 _VALID_SENSITIVITIES = {"low", "medium", "high"}
-_VALID_DETECTORS = {"rule", "embedding", "llm_judge"}
+_VALID_DETECTORS = {"rule", "embedding", "classifier", "llm_judge"}
 _VALID_LANGUAGES = {"ja", "en", "auto"}
 
 _SENSITIVITY_THRESHOLD: dict[str, float] = {
@@ -44,6 +45,7 @@ _THREAT_SEVERITY: dict[str, float] = {
     "data_exfiltration": 0.85,  # 情報漏洩誘導: 高
     "indirect_injection": 0.80, # 外部データ経由攻撃: 中高
     "prompt_leaking": 0.75,     # 内部プロンプト盗取: 中
+    "prompt_injection": 1.00,   # classifier の二値 unsafe 判定
     # 出力 threat: LLMが生成した応答に含まれる危険なコンテンツ
     "credential_leak": 1.00,    # APIキー・パスワード露出: 最重大
     "pii_leak": 0.90,           # 個人情報露出: 重大
@@ -72,6 +74,9 @@ class PromptGate:
         trusted_threshold: float = 0.95,
         immediate_block_threats: Optional[set[str]] = None,
         immediate_block_score: float = 0.85,
+        classifier_model_dir: Optional[str] = None,
+        classifier_max_length: int = 256,
+        classifier_threshold: Optional[float] = None,
         llm_api_key: Optional[str] = None,
         llm_model: Optional[str] = None,
         llm_on_error: str = "fail_open",
@@ -84,6 +89,11 @@ class PromptGate:
                 デフォルトは False（SHA-256 ハッシュのみ記録）。
                 PII を含む可能性がある入力を扱う場合は False のままにしてください。
             tenant_id:    マルチテナント環境での識別子。全ログエントリに付与される。
+            classifier_model_dir: fine-tuned classifier モデルのディレクトリ。
+                None の場合は models/promptgate-classifier-v1 を使用する。
+            classifier_max_length: classifier の最大トークン長。
+            classifier_threshold: classifier の unsafe 判定閾値。
+                None の場合は sensitivity に応じた閾値を使用する。
             llm_provider: LLMProvider インスタンス。指定した場合 llm_api_key / llm_model
                 は無視される。OpenAI 等の非 Anthropic プロバイダーを使う場合に指定。
                 指定しない場合は llm_model + llm_api_key から AnthropicProvider を生成する。
@@ -103,6 +113,10 @@ class PromptGate:
         if not (0.0 < immediate_block_score <= 1.0):
             raise ConfigurationError(
                 "immediate_block_score must be greater than 0.0 and at most 1.0."
+            )
+        if classifier_threshold is not None and not (0.0 < classifier_threshold <= 1.0):
+            raise ConfigurationError(
+                "classifier_threshold must be greater than 0.0 and at most 1.0."
             )
 
         # デフォルトは rule のみ。embedding は sentence-transformers が必要なため
@@ -155,6 +169,15 @@ class PromptGate:
         if "embedding" in _detectors:
             self._embedding_detector = EmbeddingDetector(sensitivity=sensitivity)
 
+        self._classifier_detector: Optional[ClassifierDetector] = None
+        if "classifier" in _detectors:
+            self._classifier_detector = ClassifierDetector(
+                model_dir=classifier_model_dir,
+                sensitivity=sensitivity,
+                max_length=classifier_max_length,
+                threshold=classifier_threshold,
+            )
+
         self._llm_detector: Optional[LLMJudgeDetector] = None
         self._llm_output_detector: Optional[LLMJudgeDetector] = None
         if "llm_judge" in _detectors:
@@ -201,6 +224,8 @@ class PromptGate:
         """
         if self._embedding_detector is not None:
             self._embedding_detector.warmup()
+        if self._classifier_detector is not None:
+            self._classifier_detector.warmup()
 
     def scan(
         self,
@@ -221,6 +246,10 @@ class PromptGate:
         if self._embedding_detector and self._sensitivity in ("medium", "high"):
             emb_result = self._embedding_detector.scan(text)
             per_detector.append(("embedding", emb_result))
+
+        if self._classifier_detector:
+            classifier_result = self._classifier_detector.scan(text)
+            per_detector.append(("classifier", classifier_result))
 
         if self._llm_detector:
             llm_result = self._llm_detector.scan(text)
@@ -348,6 +377,12 @@ class PromptGate:
                 asyncio.ensure_future(self._embedding_detector.scan_async(text))
             )
             task_names.append("embedding")
+
+        if self._classifier_detector:
+            tasks.append(
+                asyncio.ensure_future(self._classifier_detector.scan_async(text))
+            )
+            task_names.append("classifier")
 
         if self._llm_detector:
             tasks.append(

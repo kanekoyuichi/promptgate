@@ -14,10 +14,11 @@ dependencies = ["pyyaml"]
 
 [project.optional-dependencies]
 embedding = ["sentence-transformers"]
+classifier = ["transformers", "torch"]
 llm = ["anthropic"]
 llm-openai = ["openai"]
 dev = ["pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff"]
-all = ["sentence-transformers", "anthropic", "openai"]
+all = ["sentence-transformers", "transformers", "torch", "anthropic", "openai"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

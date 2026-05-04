@@ -42,7 +42,10 @@ Direct attacks using explicit phrases such as the following:
 - **Tool-call injection**: Sub-instructions injected into external tool or API call parameters
 - **Novel patterns**: Attack expressions not present in the bundled YAML pattern files
 
-Adding `"embedding"` broadens coverage to semantic paraphrases. Adding `"llm_judge"` extends coverage to complex, context-dependent attacks at the cost of additional latency and API usage.
+Adding `"embedding"` broadens coverage to semantic paraphrases. Adding `"classifier"`
+uses a local fine-tuned Transformer classifier when you have a trained model directory.
+Adding `"llm_judge"` extends coverage to complex, context-dependent attacks at the cost
+of additional latency and API usage.
 
 ---
 
@@ -52,6 +55,7 @@ Adding `"embedding"` broadens coverage to semantic paraphrases. Adding `"llm_jud
 |--------|--------------------|---------|----------------|----------|
 | `"rule"` only (default) | None | < 1ms | None | Explicit phrase attacks; latency-critical environments |
 | `"rule"` + `"embedding"` | sentence-transformers (~120MB) | 5–15ms | None | Paraphrase coverage without API costs |
+| `"rule"` + `"classifier"` | transformers + torch + trained model | model-dependent | None | Local fine-tuned classification; tune recall/specificity with your validation data |
 | `"rule"` + `"llm_judge"` | anthropic or openai | +150–300ms | Yes (external API) | High-fidelity classification; cost and latency acceptable |
 
 > Before deploying `"llm_judge"` to production, define: latency budget, API cost ceiling, and failure behavior (`llm_on_error`).
@@ -72,6 +76,12 @@ Install with embedding support (requires ~400MB RAM at runtime):
 pip install "promptgate[embedding]"
 # or on shells that do not require quoting:
 pip install promptgate[embedding]
+```
+
+Install with classifier support (requires a trained Transformers model directory):
+
+```bash
+pip install "promptgate[classifier]"
 ```
 
 ---
@@ -211,6 +221,7 @@ gate = PromptGate(
 |---------|-----------------|---------|---------|---------------------------|
 | `"rule"` | Regex and phrase matching against YAML pattern files | **Enabled** | < 1ms | None |
 | `"embedding"` | Cosine similarity against attack exemplars (exemplar-based, not a fine-tuned classifier) | Disabled | 5–15ms | `pip install "promptgate[embedding]"`, ~400MB RAM |
+| `"classifier"` | Local fine-tuned Transformer sequence classifier | Disabled | model-dependent | `pip install "promptgate[classifier]"`, trained model files |
 | `"llm_judge"` | LLM classification (accuracy depends on model and prompt version) | Disabled | +150–300ms | External API call; usage-based billing |
 
 **Operational notes for `"embedding"`**
@@ -220,6 +231,22 @@ Default model: `paraphrase-multilingual-MiniLM-L12-v2` (~120MB download, ~400MB 
 ```python
 gate = PromptGate(detectors=["rule", "embedding"])
 gate.warmup()  # Eliminates cold-start delay on first request
+```
+
+**Operational notes for `"classifier"`**
+
+The classifier scanner expects a local Transformers sequence-classification model. By
+default it loads `models/promptgate-classifier-v1`; pass `classifier_model_dir` to use a
+different path. Use `classifier_threshold` and validation data to choose a recall/specificity
+tradeoff instead of lowering thresholds blindly.
+
+```python
+gate = PromptGate(
+    detectors=["rule", "classifier"],
+    classifier_model_dir="models/promptgate-classifier-v1",
+    classifier_threshold=0.6,
+)
+gate.warmup()
 ```
 
 **Operational notes for `"llm_judge"`**
