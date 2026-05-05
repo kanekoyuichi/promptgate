@@ -241,6 +241,56 @@ async def test_scan_async_embedding_error_falls_back_to_rule(
 
 
 @pytest.mark.asyncio
+async def test_scan_async_embedding_error_warning_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """embedding 失敗時に WARNING ログが出力される。"""
+    import logging
+
+    from promptgate.detectors.embedding import EmbeddingDetector
+    from promptgate.exceptions import DetectorError
+
+    async def _raise(self: object, _text: str) -> None:
+        raise DetectorError("embedding model unavailable.")
+
+    monkeypatch.setattr(EmbeddingDetector, "scan_async", _raise)
+
+    gate = PromptGate(detectors=["rule", "embedding"])
+    with caplog.at_level(logging.WARNING, logger="promptgate.core"):
+        await gate.scan_async("hello")
+
+    assert any("embedding" in r.message and r.levelno == logging.WARNING for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_scan_async_embedding_fails_llm_judge_succeeds_aggregates_correctly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """embedding 失敗 + llm_judge 成功 → rule + llm_judge の aggregate になる。"""
+    from promptgate.detectors.embedding import EmbeddingDetector
+    from promptgate.exceptions import DetectorError
+
+    async def _emb_raise(self: object, _text: str) -> None:
+        raise DetectorError("embedding failed.")
+
+    monkeypatch.setattr(EmbeddingDetector, "scan_async", _emb_raise)
+
+    # llm_judge は攻撃を検出するモック
+    attack_provider = _MockProvider(_ATTACK_RESPONSE)
+    gate = PromptGate(
+        detectors=["rule", "embedding", "llm_judge"],
+        llm_provider=attack_provider,
+    )
+    result = await gate.scan_async("hello")
+
+    # embedding は失敗したがスキップされ、llm_judge の攻撃検出が反映される
+    assert result.is_safe is False
+    assert "embedding" not in result.detector_used
+    assert "llm_judge" in result.detector_used
+
+
+@pytest.mark.asyncio
 async def test_scan_async_multiple_detector_errors_still_returns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

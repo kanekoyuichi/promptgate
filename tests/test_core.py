@@ -461,3 +461,93 @@ def test_latency_ms_is_positive() -> None:
     gate = PromptGate(detectors=["rule"])
     result = gate.scan("test input")
     assert result.latency_ms > 0.0
+
+
+# ---------------------------------------------------------------------------
+# 複合検出器エラーケース（同期）
+# ---------------------------------------------------------------------------
+
+def test_scan_embedding_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """sync scan() で embedding が失敗した場合、例外がそのまま伝播する。"""
+    from promptgate.detectors.embedding import EmbeddingDetector
+    from promptgate.exceptions import DetectorError
+
+    def _raise(self: object, text: str) -> None:
+        raise DetectorError("embedding model unavailable.")
+
+    monkeypatch.setattr(EmbeddingDetector, "scan", _raise)
+
+    gate = PromptGate(detectors=["rule", "embedding"])
+    with pytest.raises(DetectorError, match="embedding model unavailable"):
+        gate.scan("hello")
+
+
+def test_scan_classifier_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """sync scan() で classifier が失敗した場合、例外がそのまま伝播する。"""
+    from promptgate import core
+    from promptgate.exceptions import DetectorError
+
+    class _FailingClassifier:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def scan(self, text: str) -> None:
+            raise DetectorError("classifier model unavailable.")
+
+        def warmup(self) -> None:
+            pass
+
+    monkeypatch.setattr(core, "ClassifierDetector", _FailingClassifier)
+
+    gate = PromptGate(detectors=["classifier"], classifier_model_dir="/tmp/x")
+    with pytest.raises(DetectorError, match="classifier model unavailable"):
+        gate.scan("hello")
+
+
+def test_aggregate_rule_only_correct_score() -> None:
+    """_aggregate() に rule の結果だけ渡してもスコアが正しく計算される。"""
+    from promptgate.result import ScanResult as SR
+
+    gate = PromptGate(detectors=["rule"])
+    result = gate._aggregate([
+        ("rule", SR(is_safe=False, risk_score=0.75, threats=["direct_injection"],
+                    explanation="", detector_used="rule", latency_ms=0.0)),
+    ])
+    # direct_injection severity=1.0: 0.75 * 1.0 = 0.75
+    assert result.risk_score == 0.75
+    assert "direct_injection" in result.threats
+    assert result.is_safe is False
+
+
+def test_aggregate_rule_plus_llm_judge_without_embedding() -> None:
+    """_aggregate() に rule + llm_judge のみ（embedding なし）を渡した場合に
+    コロボレーションブーストが正しく適用される。"""
+    from promptgate.result import ScanResult as SR
+
+    gate = PromptGate(detectors=["rule"])
+    single = gate._aggregate([
+        ("rule", SR(is_safe=False, risk_score=0.70, threats=["jailbreak"],
+                    explanation="", detector_used="rule", latency_ms=0.0)),
+    ])
+    combined = gate._aggregate([
+        ("rule", SR(is_safe=False, risk_score=0.70, threats=["jailbreak"],
+                    explanation="", detector_used="rule", latency_ms=0.0)),
+        ("llm_judge", SR(is_safe=False, risk_score=0.65, threats=["jailbreak"],
+                         explanation="", detector_used="llm_judge", latency_ms=0.0)),
+    ])
+    # 同一 threat の複数検出器 → boost により combined のスコアが高い
+    assert combined.risk_score > single.risk_score
+
+
+def test_aggregate_all_detectors_safe_is_safe() -> None:
+    """全検出器が safe を返した場合、aggregate 結果も safe になる。"""
+    from promptgate.result import ScanResult as SR
+
+    gate = PromptGate(detectors=["rule"])
+    result = gate._aggregate([
+        ("rule", SR(is_safe=True, risk_score=0.0, threats=[],
+                    explanation="", detector_used="rule", latency_ms=0.0)),
+        ("llm_judge", SR(is_safe=True, risk_score=0.1, threats=[],
+                         explanation="", detector_used="llm_judge", latency_ms=0.0)),
+    ])
+    assert result.is_safe is True
