@@ -6,7 +6,7 @@ import hashlib
 import logging
 import time
 import uuid
-from typing import FrozenSet, Optional
+from typing import FrozenSet, Optional, cast
 
 from promptgate.detectors.classifier import ClassifierDetector
 from promptgate.detectors.embedding import EmbeddingDetector
@@ -392,9 +392,14 @@ class PromptGate:
             task_names.append("llm_judge")
 
         if tasks:
-            gathered = await asyncio.gather(*tasks)
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
             for name, result in zip(task_names, gathered):
-                per_detector.append((name, result))
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
+                if isinstance(result, Exception):
+                    logger.warning("detector %s failed in scan_async: %s", name, result)
+                else:
+                    per_detector.append((name, cast(ScanResult, result)))
 
         final = self._aggregate(per_detector, is_trusted=is_trusted)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)

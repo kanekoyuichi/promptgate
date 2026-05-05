@@ -218,6 +218,55 @@ async def test_scan_batch_async_empty_list() -> None:
 
 
 # ---------------------------------------------------------------------------
+# scan_async — 検出器エラー時のフォールバック
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_scan_async_embedding_error_falls_back_to_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """embedding が失敗しても scan_async は他の検出器の結果を返す。"""
+    from promptgate.detectors.embedding import EmbeddingDetector
+    from promptgate.exceptions import DetectorError
+
+    async def _raise(self: object, _text: str) -> None:
+        raise DetectorError("embedding model load failed.")
+
+    monkeypatch.setattr(EmbeddingDetector, "scan_async", _raise)
+
+    gate = PromptGate(detectors=["rule", "embedding"])
+    result = await gate.scan_async("hello")
+    assert result is not None
+    assert "embedding" not in result.detector_used
+
+
+@pytest.mark.asyncio
+async def test_scan_async_multiple_detector_errors_still_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """embedding と llm_judge が両方失敗しても scan_async は rule の結果を返す。"""
+    from promptgate.detectors.embedding import EmbeddingDetector
+    from promptgate.detectors.llm_judge import LLMJudgeDetector
+    from promptgate.exceptions import DetectorError
+
+    async def _emb_raise(self: object, _text: str) -> None:
+        raise DetectorError("embedding failed.")
+
+    async def _llm_raise(self: object, _text: str) -> None:
+        raise DetectorError("llm failed.")
+
+    monkeypatch.setattr(EmbeddingDetector, "scan_async", _emb_raise)
+    monkeypatch.setattr(LLMJudgeDetector, "scan_async", _llm_raise)
+
+    provider = _MockProvider(_SAFE_RESPONSE)
+    gate = PromptGate(detectors=["rule", "embedding", "llm_judge"], llm_provider=provider)
+    result = await gate.scan_async("hello")
+    assert result is not None
+    assert "embedding" not in result.detector_used
+    assert "llm_judge" not in result.detector_used
+
+
+# ---------------------------------------------------------------------------
 # warmup
 # ---------------------------------------------------------------------------
 
