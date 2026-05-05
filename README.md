@@ -430,7 +430,7 @@ gate = PromptGate(
     ],
     # Trusted users are scanned at a relaxed threshold (exact string match; no glob)
     trusted_user_ids=["admin-01", "ops-user"],
-    trusted_threshold=0.95,  # default: 0.95, higher than the standard block threshold
+    trusted_threshold=0.95,  # default: 0.95, independent of sensitivity setting
 )
 
 # Append a custom block rule at runtime
@@ -440,6 +440,27 @@ gate.add_rule(
     severity="high"   # "low" / "medium" / "high"
 )
 ```
+
+**Whitelist behavior**: Patterns matched by `whitelist_patterns` lower the rule detector's score for that input, but they do not override high-confidence detections. When `risk_score >= 0.8`, the input is blocked regardless of whitelist matches.
+
+**Trusted threshold**: `trusted_threshold` is evaluated independently of the `sensitivity` setting. It applies only when the `user_id` passed to `scan()` is in `trusted_user_ids`. The default of `0.95` means trusted users are blocked only when the risk score is extremely high.
+
+### Immediate block policy
+
+By default, any detection of `direct_injection` or `jailbreak` with a score above `0.85` triggers an immediate block (Tier 1), bypassing corroboration across other detectors. Both the threat set and the threshold are configurable:
+
+```python
+# Disable immediate blocking entirely — always use the full Tier 2/3 aggregation
+gate = PromptGate(immediate_block_threats=set())
+
+# Add credential_leak to immediate block targets (financial / healthcare apps)
+gate = PromptGate(
+    immediate_block_threats={"direct_injection", "jailbreak", "credential_leak"},
+    immediate_block_score=0.80,  # lower threshold for earlier blocking
+)
+```
+
+`immediate_block_threats` accepts any threat label. See `ScanResult.threats` for the full list.
 
 ### Logging
 
@@ -719,6 +740,10 @@ Input normalization (NFKC, zero-width character removal, dot/hyphen separator re
 ### Embedding-based detection (`"embedding"`)
 
 Embedding-based detection computes cosine similarity against a fixed set of attack exemplars. It is **not** a fine-tuned binary classifier. Generalization to attack expressions outside the exemplar distribution is not guaranteed. Identifying attack intent embedded in long or complex contexts is a known weakness.
+
+### Fine-tuned classifier (`"classifier"`)
+
+The bundled classifier model is trained on a curated dataset. Performance degrades for inputs that differ significantly from the training distribution. `classifier_max_length` (default `256`) is the tokenizer's `max_length`; inputs longer than this value are truncated before classification. For longer inputs, increase this value at the cost of higher inference latency.
 
 ### LLM-as-Judge (`"llm_judge"`)
 

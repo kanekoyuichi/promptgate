@@ -89,9 +89,27 @@ class PromptGate:
                 デフォルトは False（SHA-256 ハッシュのみ記録）。
                 PII を含む可能性がある入力を扱う場合は False のままにしてください。
             tenant_id:    マルチテナント環境での識別子。全ログエントリに付与される。
+            whitelist_patterns: スキャンから除外する正規表現パターンのリスト。
+                マッチしたテキストは低感度で扱われる。ただし risk_score >= 0.8 の
+                高確信度検出はホワイトリストを無視してブロックする。
+            trusted_user_ids: 緩和された閾値でスキャンするユーザー ID のリスト。
+                glob は不可、完全一致のみ。scan() の user_id 引数と照合される。
+            trusted_threshold: trusted_user_ids に含まれるユーザーの unsafe 判定閾値。
+                デフォルトは 0.95（通常の sensitivity 閾値より高い）。
+                sensitivity 設定とは独立して適用される。
+            immediate_block_threats: Tier 1 即時ブロックの対象 threat セット。
+                デフォルトは {"direct_injection", "jailbreak"}。
+                空集合 set() を指定すると即時ブロックを無効化する（常に Tier 2/3 で評価）。
+                金融・医療等で credential_leak も即時ブロックする場合は
+                {"direct_injection", "jailbreak", "credential_leak"} を指定。
+            immediate_block_score: Tier 1 即時ブロックが発動するスコア閾値。
+                いずれかの検出器が immediate_block_threats に属する threat を
+                このスコア以上で検出した場合、他の検出器を待たずに即時ブロックする。
+                デフォルトは 0.85。
             classifier_model_dir: classifier モデルのディレクトリまたは
                 Hugging Face model ID。None の場合は PromptGate の既定モデルを使用する。
-            classifier_max_length: classifier の最大トークン長。
+            classifier_max_length: classifier の tokenizer に渡す max_length。
+                デフォルトは 256。モデルがより長いシーケンスを必要とする場合に増やす。
             classifier_threshold: classifier の unsafe 判定閾値。
                 None の場合は sensitivity に応じた閾値を使用する。
             llm_provider: LLMProvider インスタンス。指定した場合 llm_api_key / llm_model
@@ -393,13 +411,17 @@ class PromptGate:
 
         if tasks:
             gathered = await asyncio.gather(*tasks, return_exceptions=True)
+            first_exc: Optional[Exception] = None
             for name, result in zip(task_names, gathered):
                 if isinstance(result, asyncio.CancelledError):
                     raise result
                 if isinstance(result, Exception):
-                    logger.warning("detector %s failed in scan_async: %s", name, result)
+                    if first_exc is None:
+                        first_exc = result
                 else:
                     per_detector.append((name, cast(ScanResult, result)))
+            if first_exc is not None:
+                raise first_exc
 
         final = self._aggregate(per_detector, is_trusted=is_trusted)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)

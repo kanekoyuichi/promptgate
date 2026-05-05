@@ -353,7 +353,7 @@ def test_anthropic_vertex_provider_optional_kwargs_omitted() -> None:
 # ---------------------------------------------------------------------------
 
 def test_classify_timeout_error() -> None:
-    from promptgate.exceptions import APITimeoutError
+    from promptgate.exceptions import APITimeoutError as ExpectedError
     from promptgate.providers.base import classify_provider_error
 
     class APITimeoutError(Exception):  # mimic anthropic / httpx class name
@@ -361,8 +361,7 @@ def test_classify_timeout_error() -> None:
 
     exc = APITimeoutError("timed out")
     result = classify_provider_error("Anthropic", exc)
-    from promptgate.exceptions import APITimeoutError as _Expected
-    assert isinstance(result, _Expected)
+    assert isinstance(result, ExpectedError)
 
 
 def test_classify_auth_error() -> None:

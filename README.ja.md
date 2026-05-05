@@ -440,6 +440,41 @@ gate = PromptGate(
 
 ---
 
+## ホワイトリスト・信頼ユーザー・即時ブロック
+
+### ホワイトリストと信頼ユーザー
+
+```python
+gate = PromptGate(
+    # アプリ固有の正当なフレーズを除外する
+    whitelist_patterns=[r"以前の指示は無視して"],  # カスタマーサポートの定型文など
+    # 信頼ユーザーは緩和された閾値で判定する（完全一致、glob 不可）
+    trusted_user_ids=["admin-01", "ops-user"],
+    trusted_threshold=0.95,  # デフォルト: 0.95（通常の閾値より高い）
+)
+```
+
+**ホワイトリストの注意点**: `whitelist_patterns` にマッチしたテキストは rule 検出器のスコアが下がりますが、確信度が高い検出（risk_score >= 0.8）ではホワイトリストを無視してブロックします。
+
+**trusted_threshold について**: `sensitivity` の設定とは独立して適用されます。`scan()` の `user_id` 引数が `trusted_user_ids` に含まれる場合のみ有効です。
+
+### 即時ブロックの設定
+
+デフォルトでは、`direct_injection` または `jailbreak` がスコア 0.85 以上で検出されると、他の検出器の結果を待たずに即時ブロックします（Tier 1）。この対象と閾値は変更できます。
+
+```python
+# 即時ブロックを無効化する（常に Tier 2/3 の集計で評価）
+gate = PromptGate(immediate_block_threats=set())
+
+# 金融・医療など高セキュリティ環境で credential_leak も即時ブロック対象に追加
+gate = PromptGate(
+    immediate_block_threats={"direct_injection", "jailbreak", "credential_leak"},
+    immediate_block_score=0.80,
+)
+```
+
+---
+
 ## 検出できる脅威カテゴリ
 
 | カテゴリ | 意味 | 例 |
@@ -473,6 +508,7 @@ PromptGate はプロンプトインジェクション検出を補助するライ
 - 既定モデルを初めて使うときは、モデルのダウンロードが必要です
 - 独自モデルを使う場合は、モデルファイルの配布と更新が必要です
 - しきい値は評価データで確認して決める必要があります
+- `classifier_max_length`（デフォルト: 256）は tokenizer の `max_length` です。これを超える入力はトークン単位で切り捨てられます。長い入力を扱う場合は値を増やしてください（推論時間が増加します）
 
 ### llm_judge の制限
 
