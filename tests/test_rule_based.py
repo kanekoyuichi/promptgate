@@ -1,7 +1,6 @@
 import pytest
 
 from promptgate.detectors.rule_based import RuleBasedDetector
-from promptgate.exceptions import DetectorError
 
 
 def test_detects_english_jailbreak() -> None:

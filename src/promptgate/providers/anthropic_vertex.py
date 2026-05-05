@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 from promptgate.exceptions import DetectorError
 from promptgate.providers.base import LLMProvider
@@ -76,7 +76,7 @@ class AnthropicVertexProvider(LLMProvider):
                 "AnthropicVertexProvider requires the anthropic package."
                 " Install it with: pip install anthropic"
             ) from e
-        self._sync_client = anthropic.AnthropicVertex(**self._client_kwargs())  # type: ignore[arg-type]
+        self._sync_client = anthropic.AnthropicVertex(**self._client_kwargs())
         return self._sync_client
 
     def _get_async_client(self) -> anthropic_module.AsyncAnthropicVertex:
@@ -89,7 +89,7 @@ class AnthropicVertexProvider(LLMProvider):
                 "AnthropicVertexProvider requires the anthropic package."
                 " Install it with: pip install anthropic"
             ) from e
-        self._async_client = anthropic.AsyncAnthropicVertex(**self._client_kwargs())  # type: ignore[arg-type]
+        self._async_client = anthropic.AsyncAnthropicVertex(**self._client_kwargs())
         return self._async_client
 
     def complete(self, system: str, user_message: str) -> str:
@@ -102,7 +102,7 @@ class AnthropicVertexProvider(LLMProvider):
                 messages=[{"role": "user", "content": user_message}],
                 timeout=30.0,
             )
-            return message.content[0].text.strip()
+            return cast(str, message.content[0].text.strip())
         except Exception as e:
             raise DetectorError(f"Anthropic Vertex AI API call failed: {e}") from e
 
@@ -116,6 +116,6 @@ class AnthropicVertexProvider(LLMProvider):
                 messages=[{"role": "user", "content": user_message}],
                 timeout=30.0,
             )
-            return message.content[0].text.strip()
+            return cast(str, message.content[0].text.strip())
         except Exception as e:
             raise DetectorError(f"Anthropic Vertex AI API call failed: {e}") from e

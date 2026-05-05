@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "promptgate"
-version = "0.3.0"
+version = "0.4.0"
 description = "LLMアプリケーション向けプロンプトインジェクション検出ライブラリ"
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,11 +14,22 @@ dependencies = ["pyyaml"]
 
 [project.optional-dependencies]
 embedding = ["sentence-transformers"]
-classifier = ["transformers", "torch"]
+classifier = ["transformers", "torch", "safetensors"]
+train = ["datasets", "pandas", "scikit-learn", "transformers", "torch", "safetensors"]
 llm = ["anthropic"]
 llm-openai = ["openai"]
 dev = ["pytest", "pytest-cov", "pytest-asyncio", "mypy", "ruff"]
-all = ["sentence-transformers", "transformers", "torch", "anthropic", "openai"]
+all = [
+    "sentence-transformers",
+    "datasets",
+    "pandas",
+    "scikit-learn",
+    "transformers",
+    "torch",
+    "safetensors",
+    "anthropic",
+    "openai",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -29,6 +40,15 @@ promptgate = ["patterns/*.yaml"]
 [tool.mypy]
 python_version = "3.8"
 strict = true
+
+[[tool.mypy.overrides]]
+module = [
+    "anthropic",
+    "openai",
+    "sentence_transformers",
+    "torch",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

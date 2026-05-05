@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import time
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from promptgate.detectors.base import BaseDetector
 from promptgate.exceptions import DetectorError
@@ -64,7 +64,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
     """
     # 1. そのまま parse
     try:
-        return json.loads(raw)
+        return cast(dict[str, Any], json.loads(raw))
     except json.JSONDecodeError:
         pass
 
@@ -72,7 +72,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if m:
         try:
-            return json.loads(m.group(1))
+            return cast(dict[str, Any], json.loads(m.group(1)))
         except json.JSONDecodeError:
             pass
 
@@ -80,7 +80,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
     m = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
     if m:
         try:
-            return json.loads(m.group(0))
+            return cast(dict[str, Any], json.loads(m.group(0)))
         except json.JSONDecodeError:
             pass
 
@@ -105,7 +105,7 @@ def _parse_response(raw: str) -> ScanResult:
     return ScanResult(
         is_safe=not is_attack,
         risk_score=risk_score,
-        threats=threats,
+        threats=tuple(threats),
         explanation=reason,
         detector_used="llm_judge",
         latency_ms=0.0,
@@ -235,7 +235,7 @@ class LLMJudgeDetector(BaseDetector):
         return ScanResult(
             is_safe=is_safe,
             risk_score=0.0 if is_safe else 1.0,
-            threats=[] if is_safe else ["llm_judge_error"],
+            threats=() if is_safe else ("llm_judge_error",),
             explanation=f"LLM judge error; {action}: {exc}",
             detector_used="llm_judge",
             latency_ms=(time.monotonic() - start) * 1000,
