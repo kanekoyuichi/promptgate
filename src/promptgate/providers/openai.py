@@ -4,7 +4,7 @@ import os
 from typing import TYPE_CHECKING, Optional, cast
 
 from promptgate.exceptions import DetectorError
-from promptgate.providers.base import LLMProvider
+from promptgate.providers.base import LLMProvider, classify_provider_error
 
 if TYPE_CHECKING:
     import openai as openai_module
@@ -111,7 +111,7 @@ class OpenAIProvider(LLMProvider):
         except DetectorError:
             raise
         except Exception as e:
-            raise DetectorError(f"OpenAI API call failed: {e}") from e
+            raise classify_provider_error("OpenAI", e) from e
 
     async def complete_async(self, system: str, user_message: str) -> str:
         client = self._get_async_client()
@@ -132,4 +132,4 @@ class OpenAIProvider(LLMProvider):
         except DetectorError:
             raise
         except Exception as e:
-            raise DetectorError(f"OpenAI API call failed: {e}") from e
+            raise classify_provider_error("OpenAI", e) from e

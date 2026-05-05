@@ -475,13 +475,48 @@ if not output_result.is_safe:
 ```python
 result = gate.scan(user_input)
 
-result.is_safe        # bool   — True if risk_score is below the sensitivity threshold
-result.risk_score     # float  — aggregate risk score in [0.0, 1.0]
-result.threats        # tuple  — detected threat category labels
-result.explanation    # str    — human-readable summary
-result.detector_used  # str    — scanner(s) that produced the result
-result.latency_ms     # float  — end-to-end scan latency in milliseconds
+result.is_safe        # bool  — True when risk_score < sensitivity threshold
+result.risk_score     # float — aggregate risk score in [0.0, 1.0]
+result.threats        # tuple — detected threat category labels
+result.explanation    # str   — human-readable summary
+result.detector_used  # str   — detector name(s) that produced the result
+result.latency_ms     # float — end-to-end scan latency in milliseconds
 ```
+
+#### `risk_score` calculation
+
+The score is computed in three tiers:
+
+1. **Immediate block** — if a critical threat (`direct_injection`, `jailbreak`) exceeds `immediate_block_score` (default `0.85`), the detector's raw score is returned immediately.
+2. **Severity-adjusted max** — each detector's score is multiplied by the highest threat-severity coefficient among its detected threats (`direct_injection`=1.0, `jailbreak`=0.95, `data_exfiltration`=0.85, `indirect_injection`=0.80, `prompt_leaking`=0.75). The maximum across all detectors becomes the base score.
+3. **Corroboration boost** — when two or more detectors independently detect the same threat type, `+0.08` per additional detector is added, capped at `+0.15`.
+
+#### `detector_used` values
+
+Detector names are joined with `+` in pipeline order:
+
+| Value | Meaning |
+|-------|---------|
+| `"rule"` | Rule-based scanner only |
+| `"rule+embedding"` | Rule + embedding |
+| `"rule+embedding+llm_judge"` | Full pipeline |
+| `"rule+classifier"` | Rule + classifier |
+| `""` | No detectors ran (e.g. empty input) |
+
+#### `threats` labels
+
+`direct_injection`, `jailbreak`, `data_exfiltration`, `indirect_injection`, `prompt_leaking`, `prompt_injection` (classifier binary label), `credential_leak`, `pii_leak`, `system_prompt_leak`.
+
+#### `explanation` format
+
+Format varies by detector and multiple detectors are joined with ` / `:
+
+| Detector | Example |
+|----------|---------|
+| `rule` | `"Threats detected: direct_injection (score=0.80)"` |
+| `embedding` | `"Embedding similarity 0.78 to exemplar …"` |
+| `classifier` | `"Attack probability: 0.91"` |
+| `llm_judge` | Free-form reason from the LLM |
 
 ---
 

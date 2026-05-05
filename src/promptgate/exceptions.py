@@ -8,3 +8,19 @@ class DetectorError(PromptGateError):
 
 class ConfigurationError(PromptGateError):
     """設定値が不正な場合のエラー"""
+
+
+class APITimeoutError(DetectorError):
+    """LLM プロバイダーへのリクエストがタイムアウトした"""
+
+
+class APIAuthenticationError(DetectorError):
+    """LLM プロバイダーの認証に失敗した（API キー不正など）"""
+
+
+class APIRateLimitError(DetectorError):
+    """LLM プロバイダーのレート制限に達した"""
+
+
+class ParseError(DetectorError):
+    """LLM レスポンスの解析に失敗した"""
