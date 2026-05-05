@@ -89,8 +89,8 @@ class PromptGate:
                 デフォルトは False（SHA-256 ハッシュのみ記録）。
                 PII を含む可能性がある入力を扱う場合は False のままにしてください。
             tenant_id:    マルチテナント環境での識別子。全ログエントリに付与される。
-            classifier_model_dir: fine-tuned classifier モデルのディレクトリ。
-                None の場合は models/promptgate-classifier-v1 を使用する。
+            classifier_model_dir: classifier モデルのディレクトリまたは
+                Hugging Face model ID。None の場合は PromptGate の既定モデルを使用する。
             classifier_max_length: classifier の最大トークン長。
             classifier_threshold: classifier の unsafe 判定閾値。
                 None の場合は sensitivity に応じた閾値を使用する。
@@ -324,7 +324,7 @@ class PromptGate:
     ) -> ScanResult:
         """非同期スキャン。FastAPI / ASGI アプリでイベントループをブロックしない。
 
-        rule-based 検出はスレッドプールで実行。
+        rule-based 検出は軽量なため同期実行。
         embedding 検出はスレッドプールで実行（CPU バウンド）。
         LLM judge 検出はプロバイダーの非同期 HTTP クライアントで実行。
         embedding と LLM judge は asyncio.gather で並行実行する。
@@ -345,9 +345,10 @@ class PromptGate:
 
         per_detector: list[tuple[str, ScanResult]] = []
 
-        # rule-based: 高速・CPU バウンドのためスレッドプールで実行
-        loop = asyncio.get_running_loop()
-        rule_result = await loop.run_in_executor(None, self._rule_detector.scan, text)
+        # rule-based is intentionally run inline. It is fast, and avoiding the
+        # event loop's default executor prevents lingering worker threads in
+        # pytest-asyncio and short-lived ASGI test processes.
+        rule_result = self._rule_detector.scan(text)
         per_detector.append(("rule", rule_result))
 
         # rule が即時ブロック条件を満たした場合、embedding / llm タスクを起動しない。
@@ -421,10 +422,8 @@ class PromptGate:
 
         per_detector: list[tuple[str, ScanResult]] = []
 
-        loop = asyncio.get_running_loop()
-        rule_result = await loop.run_in_executor(
-            None, self._output_rule_detector.scan, text
-        )
+        # Keep lightweight rule scanning inline for the same reason as scan_async().
+        rule_result = self._output_rule_detector.scan(text)
         per_detector.append(("rule_output", rule_result))
 
         if self._llm_output_detector:
@@ -613,7 +612,7 @@ class PromptGate:
                     return ScanResult(
                         is_safe=False,
                         risk_score=round(result.risk_score, 4),
-                        threats=list(all_threats),
+                        threats=tuple(all_threats),
                         explanation=(
                             f"[immediate block: {triggered_str} / score={result.risk_score:.2f}]"
                             f" {' / '.join(explanations)}"
@@ -677,7 +676,7 @@ class PromptGate:
         return ScanResult(
             is_safe=is_safe,
             risk_score=round(final_score, 4),
-            threats=list(all_threats),
+            threats=tuple(all_threats),
             explanation=" / ".join(explanations),
             detector_used="+".join(detector_names),
             latency_ms=0.0,

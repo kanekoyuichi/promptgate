@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, cast
 
 from promptgate.detectors.base import BaseDetector
 from promptgate.exceptions import DetectorError
@@ -201,7 +201,7 @@ class EmbeddingDetector(BaseDetector):
         EmbeddingDetector._load_model(self._model_name)
 
         import torch  # _load_model 成功後は torch が保証されている
-        model = EmbeddingDetector._cls_models[self._model_name]
+        model = cast(Any, EmbeddingDetector._cls_models[self._model_name])
         category_embeddings = EmbeddingDetector._cls_embeddings[self._model_name]
 
         # 正規化済みテキストをエンコードし回避攻撃への耐性を確保
@@ -246,7 +246,7 @@ class EmbeddingDetector(BaseDetector):
         return ScanResult(
             is_safe=is_safe,
             risk_score=round(max_score, 4),
-            threats=threats,
+            threats=tuple(threats),
             explanation=explanation,
             detector_used="embedding",
             latency_ms=(time.monotonic() - start) * 1000,

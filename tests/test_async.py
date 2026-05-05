@@ -6,7 +6,6 @@ scan_async / scan_output_async / scan_batch_async の動作を検証する。
 import asyncio
 import json
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 

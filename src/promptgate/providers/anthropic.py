@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 from promptgate.exceptions import DetectorError
 from promptgate.providers.base import LLMProvider
@@ -86,7 +86,7 @@ class AnthropicProvider(LLMProvider):
                 messages=[{"role": "user", "content": user_message}],
                 timeout=30.0,
             )
-            return message.content[0].text.strip()
+            return cast(str, message.content[0].text.strip())
         except Exception as e:
             raise DetectorError(f"Anthropic API call failed: {e}") from e
 
@@ -100,6 +100,6 @@ class AnthropicProvider(LLMProvider):
                 messages=[{"role": "user", "content": user_message}],
                 timeout=30.0,
             )
-            return message.content[0].text.strip()
+            return cast(str, message.content[0].text.strip())
         except Exception as e:
             raise DetectorError(f"Anthropic API call failed: {e}") from e

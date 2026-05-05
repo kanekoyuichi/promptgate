@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 from promptgate.exceptions import DetectorError
 from promptgate.providers.base import LLMProvider
@@ -79,7 +79,7 @@ class OpenAIProvider(LLMProvider):
         kwargs: dict[str, object] = {"api_key": self._api_key}
         if self._base_url:
             kwargs["base_url"] = self._base_url
-        self._sync_client = openai.OpenAI(**kwargs)  # type: ignore[arg-type]
+        self._sync_client = openai.OpenAI(**kwargs)
         return self._sync_client
 
     def _get_async_client(self) -> openai_module.AsyncOpenAI:
@@ -89,7 +89,7 @@ class OpenAIProvider(LLMProvider):
         kwargs: dict[str, object] = {"api_key": self._api_key}
         if self._base_url:
             kwargs["base_url"] = self._base_url
-        self._async_client = openai.AsyncOpenAI(**kwargs)  # type: ignore[arg-type]
+        self._async_client = openai.AsyncOpenAI(**kwargs)
         return self._async_client
 
     def complete(self, system: str, user_message: str) -> str:
@@ -107,7 +107,7 @@ class OpenAIProvider(LLMProvider):
             content = response.choices[0].message.content
             if content is None:
                 raise DetectorError("OpenAI API returned an empty response.")
-            return content.strip()
+            return cast(str, content.strip())
         except DetectorError:
             raise
         except Exception as e:
@@ -128,7 +128,7 @@ class OpenAIProvider(LLMProvider):
             content = response.choices[0].message.content
             if content is None:
                 raise DetectorError("OpenAI API returned an empty response.")
-            return content.strip()
+            return cast(str, content.strip())
         except DetectorError:
             raise
         except Exception as e:

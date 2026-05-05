@@ -249,7 +249,7 @@ class RuleBasedDetector(BaseDetector):
             return ScanResult(
                 is_safe=True,
                 risk_score=0.0,
-                threats=[],
+                threats=(),
                 explanation="Matched a whitelist pattern.",
                 detector_used="rule_based",
                 latency_ms=(time.monotonic() - start) * 1000,
@@ -265,7 +265,7 @@ class RuleBasedDetector(BaseDetector):
         return ScanResult(
             is_safe=is_safe,
             risk_score=round(final_score, 4),
-            threats=detected_unique,
+            threats=tuple(detected_unique),
             explanation=explanation,
             detector_used="rule_based",
             latency_ms=(time.monotonic() - start) * 1000,

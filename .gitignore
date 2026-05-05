@@ -47,6 +47,7 @@ reports/
 *.safetensors
 models/*/phase1_checkpoint/
 models/*/checkpoint-*/
+models/promptgate-classifier-v2/
 
 # ─────────────────────────────────────────
 # 機密情報
@@ -69,3 +70,5 @@ Thumbs.db
 .claude/
 .codex/
 .agents/
+AGENTS.md
+CLAUDE.md

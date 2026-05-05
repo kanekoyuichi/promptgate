@@ -5,7 +5,6 @@
 - 実際の情報漏洩パターンが検出される
 の両面を検証する。
 """
-import pytest
 
 from promptgate.detectors.rule_based import RuleBasedDetector
 
