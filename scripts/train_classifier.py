@@ -48,6 +48,8 @@ class TrainConfig:
     eval_batch: int
     attack_weight: float
     resume_phase1: bool
+    weight_decay: float
+    clip_grad_max_norm: float
 
 
 def parse_args() -> TrainConfig:
@@ -69,6 +71,8 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--eval-batch", type=int, default=4)
     parser.add_argument("--attack-weight", type=float, default=1.0)
     parser.add_argument("--no-resume-phase1", action="store_true")
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--clip-grad-max-norm", type=float, default=1.0)
     args = parser.parse_args()
 
     return TrainConfig(
@@ -93,6 +97,8 @@ def parse_args() -> TrainConfig:
         eval_batch=args.eval_batch,
         attack_weight=args.attack_weight,
         resume_phase1=not args.no_resume_phase1,
+        weight_decay=args.weight_decay,
+        clip_grad_max_norm=args.clip_grad_max_norm,
     )
 
 
@@ -238,7 +244,7 @@ def train_phase1(
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
         lr=config.phase1_lr,
-        weight_decay=0.01,
+        weight_decay=config.weight_decay,
     )
     loader = DataLoader(train_ds, batch_size=config.phase1_batch, shuffle=True)
     steps_per_epoch = len(loader)
@@ -251,7 +257,7 @@ def train_phase1(
             out = model(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"])
             loss = weighted_loss(out.logits, batch["labels"], config.attack_weight)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.clip_grad_max_norm)
             optimizer.step()
             total_loss += float(loss.item())
             if step % 50 == 0 or step == steps_per_epoch:
@@ -296,7 +302,7 @@ def train_phase2(
             {"params": backbone_params, "lr": config.phase2_lr_backbone},
             {"params": head_params, "lr": config.phase2_lr_head},
         ],
-        weight_decay=0.01,
+        weight_decay=config.weight_decay,
     )
 
     loader = DataLoader(train_ds, batch_size=config.phase2_batch, shuffle=True)
@@ -325,7 +331,7 @@ def train_phase2(
             total_loss += float(loss.item())
 
             if step % config.phase2_grad_accum == 0 or step == steps_per_epoch:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.clip_grad_max_norm)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()

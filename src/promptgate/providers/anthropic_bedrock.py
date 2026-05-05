@@ -82,7 +82,7 @@ class AnthropicBedrockProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicBedrockProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._sync_client = anthropic.AnthropicBedrock(**self._client_kwargs())
         return self._sync_client
@@ -95,7 +95,7 @@ class AnthropicBedrockProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicBedrockProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._async_client = anthropic.AsyncAnthropicBedrock(**self._client_kwargs())
         return self._async_client

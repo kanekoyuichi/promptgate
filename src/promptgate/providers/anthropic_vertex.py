@@ -74,7 +74,7 @@ class AnthropicVertexProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicVertexProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._sync_client = anthropic.AnthropicVertex(**self._client_kwargs())
         return self._sync_client
@@ -87,7 +87,7 @@ class AnthropicVertexProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicVertexProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._async_client = anthropic.AsyncAnthropicVertex(**self._client_kwargs())
         return self._async_client

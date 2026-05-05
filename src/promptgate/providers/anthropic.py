@@ -43,7 +43,7 @@ class AnthropicProvider(LLMProvider):
             raise DetectorError(
                 "AnthropicProvider requires a model identifier."
                 " See the Anthropic documentation for the latest model IDs."
-                " Example: 'claude-haiku-4-5-20251001'"
+                " Example: 'claude-haiku-4-5-20251001'."
             )
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self._model = model
@@ -58,7 +58,7 @@ class AnthropicProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._sync_client = anthropic.Anthropic(api_key=self._api_key)
         return self._sync_client
@@ -71,7 +71,7 @@ class AnthropicProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._async_client = anthropic.AsyncAnthropic(api_key=self._api_key)
         return self._async_client

@@ -54,7 +54,7 @@ class OpenAIProvider(LLMProvider):
         if model is None:
             raise DetectorError(
                 "OpenAIProvider requires a model identifier."
-                " Example: 'gpt-4o-mini', 'gpt-4o'"
+                " Example: 'gpt-4o-mini', 'gpt-4o'."
             )
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         self._model = model
@@ -69,7 +69,7 @@ class OpenAIProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "OpenAIProvider requires the openai package."
-                " Install it with: pip install openai"
+                " Install it with: pip install openai."
             ) from e
 
     def _get_sync_client(self) -> openai_module.OpenAI:
