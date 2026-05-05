@@ -60,6 +60,16 @@ of additional latency and API usage.
 
 > Before deploying `"llm_judge"` to production, define: latency budget, API cost ceiling, and failure behavior (`llm_on_error`).
 
+**Reference metrics on an independent holdout set** (80 samples not used in training; 40 attacks, 40 safe; bilingual English/Japanese):
+
+| Detector | Recall | Specificity | Precision | Accuracy |
+|----------|-------:|------------:|----------:|---------:|
+| Rule only | 0.0% | 100.0% | — | 50.0% |
+| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% |
+| Classifier v2 (default, threshold 0.5) | **92.5%** | **85.0%** | **86.0%** | **88.8%** |
+
+Full breakdown by attack category and comparison with classifier v1 in [Evaluation results](#evaluation-results).
+
 ---
 
 ## Installation
@@ -569,16 +579,41 @@ gate = PromptGate(
 
 ### Evaluation results
 
-Reference results on 80 evaluation samples that were not used for training. The classifier threshold is `0.5`.
+Holdout: 80 samples not used for training or hard-data construction. Threshold `0.5` for all classifier rows.
 
-| Detector | Recall | Specificity | Precision | Accuracy |
-|----------|-------:|------------:|----------:|---------:|
-| Rule only | 0.0% | 100.0% | 0.0% | 50.0% |
-| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% |
-| Rule + embedding | 77.5% | 82.5% | 81.6% | 80.0% |
-| Classifier | 92.5% | 85.0% | 86.0% | 88.8% |
+**Composition**: 40 attacks (20 direct-injection + 20 paraphrase), 40 safe inputs (20 normal + 20 false-positive-prone), bilingual English/Japanese.
 
-The metrics mean the following:
+#### Overall comparison
+
+| Detector | Recall | Specificity | Precision | Accuracy | TP | FP | TN | FN |
+|----------|-------:|------------:|----------:|---------:|---:|---:|---:|---:|
+| Rule only | 0.0% | 100.0% | — | 50.0% | 0 | 0 | 40 | 40 |
+| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
+| Rule + embedding | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
+| Classifier v1 | 100.0% | 62.5% | 72.7% | 81.2% | 40 | 15 | 25 | 0 |
+| **Classifier v2 (default)** | **92.5%** | **85.0%** | **86.0%** | **88.8%** | **37** | **6** | **34** | **3** |
+
+#### Classifier v2 — breakdown by input category
+
+| Category | Samples | TP | FN | Recall | TN | FP | Specificity |
+|----------|---------:|---:|---:|-------:|---:|---:|------------:|
+| Direct injection | 20 attack | 18 | 2 | 90.0% | — | — | — |
+| Paraphrase injection | 20 attack | 19 | 1 | 95.0% | — | — | — |
+| Safe (normal) | 20 safe | — | — | — | 19 | 1 | 95.0% |
+| Safe (false-positive-prone) | 20 safe | — | — | — | 15 | 5 | 75.0% |
+
+The false-positive-prone category includes inputs containing instruction-like phrasing (e.g. "please follow the new instructions") that are not attacks. Specificity on this group (75%) is the main weakness of v2 at threshold 0.5.
+
+#### Embedding only — breakdown by input category
+
+| Category | Samples | TP | FN | Recall | TN | FP | Specificity |
+|----------|---------:|---:|---:|-------:|---:|---:|------------:|
+| Direct injection | 20 attack | 18 | 2 | 90.0% | — | — | — |
+| Paraphrase injection | 20 attack | 13 | 7 | 65.0% | — | — | — |
+| Safe (normal) | 20 safe | — | — | — | 20 | 0 | 100.0% |
+| Safe (false-positive-prone) | 20 safe | — | — | — | 13 | 7 | 65.0% |
+
+#### Reading the metrics
 
 | Metric | Meaning | When it is high |
 |--------|---------|-----------------|
@@ -587,11 +622,9 @@ The metrics mean the following:
 | Precision | Percentage of inputs flagged as attacks that were actually attacks | Unsafe verdicts are more reliable |
 | Accuracy | Percentage of all inputs classified correctly as attack or safe | More overall correct decisions |
 
-If you want to miss as few attacks as possible, pay close attention to recall. If you do not want to block normal user input too often, specificity is also important. Precision shows how much you can trust an unsafe verdict. Accuracy is useful as a broad summary, but it should be read together with the other metrics because it depends on the balance of attack and safe samples.
+Classifier v2 improves specificity over v1 (85.0% vs 62.5%) while keeping recall high (92.5%). The tradeoff: v1 catches every attack in this holdout but blocks 37.5% of safe inputs. v2 misses 3 attacks but blocks only 15% of safe inputs. Embedding covers direct injections well but drops to 65% recall on paraphrase attacks.
 
-In this evaluation, `classifier` scored higher than `embedding` on recall, specificity, precision, and accuracy. It is a good option when you want to detect more attacks while also reducing false blocks of safe input.
-
-These figures are reference values for the fixed evaluation data in this repository. Production accuracy depends on language, domain, input distribution, and attack diversity.
+These figures are reference values for the holdout data in this repository. Production accuracy depends on language, domain, input distribution, and attack diversity.
 
 ---
 
