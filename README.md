@@ -66,9 +66,9 @@ of additional latency and API usage.
 |----------|-------:|------------:|----------:|---------:|
 | Rule only | 0.0% | 100.0% | — | 50.0% |
 | Embedding only | 77.5% | 82.5% | 81.6% | 80.0% |
-| Classifier v2 (default, threshold 0.5) | **92.5%** | **85.0%** | **86.0%** | **88.8%** |
+| Classifier v2 (threshold 0.5) | **92.5%** | **85.0%** | **86.0%** | **88.8%** |
 
-Full breakdown by attack category and comparison with classifier v1 in [Evaluation results](#evaluation-results).
+Full breakdown by attack category in [Evaluation results](#evaluation-results).
 
 ---
 
@@ -590,8 +590,7 @@ Holdout: 80 samples not used for training or hard-data construction. Threshold `
 | Rule only | 0.0% | 100.0% | — | 50.0% | 0 | 0 | 40 | 40 |
 | Embedding only | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
 | Rule + embedding | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
-| Classifier v1 | 100.0% | 62.5% | 72.7% | 81.2% | 40 | 15 | 25 | 0 |
-| **Classifier v2 (default)** | **92.5%** | **85.0%** | **86.0%** | **88.8%** | **37** | **6** | **34** | **3** |
+| **Classifier v2** | **92.5%** | **85.0%** | **86.0%** | **88.8%** | **37** | **6** | **34** | **3** |
 
 #### Classifier v2 — breakdown by input category
 
@@ -602,7 +601,7 @@ Holdout: 80 samples not used for training or hard-data construction. Threshold `
 | Safe (normal) | 20 safe | — | — | — | 19 | 1 | 95.0% |
 | Safe (false-positive-prone) | 20 safe | — | — | — | 15 | 5 | 75.0% |
 
-The false-positive-prone category includes inputs containing instruction-like phrasing (e.g. "please follow the new instructions") that are not attacks. Specificity on this group (75%) is the main weakness of v2 at threshold 0.5.
+The false-positive-prone category includes inputs containing instruction-like phrasing (e.g. "please follow the new instructions") that are not attacks.
 
 #### Embedding only — breakdown by input category
 
@@ -622,7 +621,7 @@ The false-positive-prone category includes inputs containing instruction-like ph
 | Precision | Percentage of inputs flagged as attacks that were actually attacks | Unsafe verdicts are more reliable |
 | Accuracy | Percentage of all inputs classified correctly as attack or safe | More overall correct decisions |
 
-Classifier v2 improves specificity over v1 (85.0% vs 62.5%) while keeping recall high (92.5%). The tradeoff: v1 catches every attack in this holdout but blocks 37.5% of safe inputs. v2 misses 3 attacks but blocks only 15% of safe inputs. Embedding covers direct injections well but drops to 65% recall on paraphrase attacks.
+Classifier v2 achieves 92.5% recall while keeping specificity at 85.0% — it catches 37 of 40 attacks and passes 34 of 40 safe inputs. Embedding covers direct injections well (recall 90%) but drops to 65% recall on paraphrase attacks.
 
 These figures are reference values for the holdout data in this repository. Production accuracy depends on language, domain, input distribution, and attack diversity.
 
