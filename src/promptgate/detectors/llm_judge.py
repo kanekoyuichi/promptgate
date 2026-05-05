@@ -7,7 +7,7 @@ import time
 from typing import Any, Optional, cast
 
 from promptgate.detectors.base import BaseDetector
-from promptgate.exceptions import DetectorError
+from promptgate.exceptions import ConfigurationError, DetectorError, ParseError
 from promptgate.providers.anthropic import AnthropicProvider
 from promptgate.providers.base import LLMProvider
 from promptgate.result import ScanResult
@@ -84,7 +84,7 @@ def _extract_json(raw: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-    raise DetectorError(f"Failed to extract JSON from LLM response: {raw!r}")
+    raise ParseError(f"Failed to extract JSON from LLM response: {raw!r}")
 
 
 def _parse_response(raw: str) -> ScanResult:
@@ -162,16 +162,16 @@ class LLMJudgeDetector(BaseDetector):
         provider: Optional[LLMProvider] = None,
     ) -> None:
         if on_error not in _VALID_ON_ERROR:
-            raise DetectorError(
+            raise ConfigurationError(
                 f"on_error must be one of {_VALID_ON_ERROR}."
             )
         if scan_mode not in _VALID_SCAN_MODES:
-            raise DetectorError(
+            raise ConfigurationError(
                 f"scan_mode must be one of {_VALID_SCAN_MODES}."
             )
         if provider is None:
             if model is None:
-                raise DetectorError(
+                raise ConfigurationError(
                     "llm_judge detector requires a model identifier."
                     " Refer to your provider's documentation and pass the appropriate"
                     " model identifier via the model parameter."

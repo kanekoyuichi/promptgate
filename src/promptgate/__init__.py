@@ -1,6 +1,14 @@
 from promptgate.core import PromptGate
 from promptgate.detectors import ClassifierDetector
-from promptgate.exceptions import ConfigurationError, DetectorError, PromptGateError
+from promptgate.exceptions import (
+    APIAuthenticationError,
+    APIRateLimitError,
+    APITimeoutError,
+    ConfigurationError,
+    DetectorError,
+    ParseError,
+    PromptGateError,
+)
 from promptgate.providers import (
     AnthropicBedrockProvider,
     AnthropicProvider,
@@ -17,10 +25,14 @@ __all__ = [
     "PromptGateError",
     "DetectorError",
     "ConfigurationError",
+    "APITimeoutError",
+    "APIAuthenticationError",
+    "APIRateLimitError",
+    "ParseError",
     "LLMProvider",
     "AnthropicProvider",
     "AnthropicBedrockProvider",
     "AnthropicVertexProvider",
     "OpenAIProvider",
 ]
-__version__ = "0.3.0"
+__version__ = "0.4.1"

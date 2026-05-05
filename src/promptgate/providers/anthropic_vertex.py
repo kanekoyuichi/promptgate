@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, cast
 
 from promptgate.exceptions import DetectorError
-from promptgate.providers.base import LLMProvider
+from promptgate.providers.base import LLMProvider, classify_provider_error
 
 if TYPE_CHECKING:
     import anthropic as anthropic_module
@@ -74,7 +74,7 @@ class AnthropicVertexProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicVertexProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._sync_client = anthropic.AnthropicVertex(**self._client_kwargs())
         return self._sync_client
@@ -87,7 +87,7 @@ class AnthropicVertexProvider(LLMProvider):
         except ImportError as e:
             raise DetectorError(
                 "AnthropicVertexProvider requires the anthropic package."
-                " Install it with: pip install anthropic"
+                " Install it with: pip install anthropic."
             ) from e
         self._async_client = anthropic.AsyncAnthropicVertex(**self._client_kwargs())
         return self._async_client
@@ -104,7 +104,7 @@ class AnthropicVertexProvider(LLMProvider):
             )
             return cast(str, message.content[0].text.strip())
         except Exception as e:
-            raise DetectorError(f"Anthropic Vertex AI API call failed: {e}") from e
+            raise classify_provider_error("Anthropic Vertex AI", e) from e
 
     async def complete_async(self, system: str, user_message: str) -> str:
         client = self._get_async_client()
@@ -118,4 +118,4 @@ class AnthropicVertexProvider(LLMProvider):
             )
             return cast(str, message.content[0].text.strip())
         except Exception as e:
-            raise DetectorError(f"Anthropic Vertex AI API call failed: {e}") from e
+            raise classify_provider_error("Anthropic Vertex AI", e) from e

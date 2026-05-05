@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from promptgate.detectors.llm_judge import LLMJudgeDetector
-from promptgate.exceptions import DetectorError
+from promptgate.exceptions import ConfigurationError, DetectorError
 from promptgate.providers.base import LLMProvider
 
 _MODEL = "test-model"
@@ -138,7 +138,7 @@ def test_llm_judge_backward_compat_api_key_model() -> None:
 
 def test_llm_judge_requires_model_without_provider() -> None:
     # provider も model も指定しない場合はエラー
-    with pytest.raises(DetectorError, match="model"):
+    with pytest.raises(ConfigurationError, match="model"):
         LLMJudgeDetector()
 
 
@@ -206,7 +206,7 @@ def test_scan_mode_output_receives_correct_system_prompt() -> None:
 
 
 def test_scan_mode_invalid_raises() -> None:
-    with pytest.raises(DetectorError, match="scan_mode"):
+    with pytest.raises(ConfigurationError, match="scan_mode"):
         LLMJudgeDetector(provider=_MockProvider({}), scan_mode="invalid")
 
 

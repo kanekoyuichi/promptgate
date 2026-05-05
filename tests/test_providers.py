@@ -348,6 +348,116 @@ def test_anthropic_vertex_provider_optional_kwargs_omitted() -> None:
 # プロバイダー経由の end-to-end: LLMJudgeDetector + OpenAIProvider
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# classify_provider_error — エラー分類ヘルパー
+# ---------------------------------------------------------------------------
+
+def test_classify_timeout_error() -> None:
+    from promptgate.exceptions import APITimeoutError as ExpectedError
+    from promptgate.providers.base import classify_provider_error
+
+    class APITimeoutError(Exception):  # mimic anthropic / httpx class name
+        pass
+
+    exc = APITimeoutError("timed out")
+    result = classify_provider_error("Anthropic", exc)
+    assert isinstance(result, ExpectedError)
+
+
+def test_classify_auth_error() -> None:
+    from promptgate.exceptions import APIAuthenticationError
+    from promptgate.providers.base import classify_provider_error
+
+    class AuthenticationError(Exception):
+        pass
+
+    exc = AuthenticationError("invalid key")
+    result = classify_provider_error("Anthropic", exc)
+    assert isinstance(result, APIAuthenticationError)
+
+
+def test_classify_rate_limit_error() -> None:
+    from promptgate.exceptions import APIRateLimitError
+    from promptgate.providers.base import classify_provider_error
+
+    class RateLimitError(Exception):
+        pass
+
+    exc = RateLimitError("quota exceeded")
+    result = classify_provider_error("OpenAI", exc)
+    assert isinstance(result, APIRateLimitError)
+
+
+def test_classify_generic_error_falls_back_to_detector_error() -> None:
+    from promptgate.exceptions import DetectorError
+    from promptgate.providers.base import classify_provider_error
+
+    exc = ValueError("unexpected")
+    result = classify_provider_error("Anthropic", exc)
+    assert type(result) is DetectorError
+
+
+def test_new_exceptions_are_subclasses_of_detector_error() -> None:
+    from promptgate.exceptions import (
+        APIAuthenticationError,
+        APIRateLimitError,
+        APITimeoutError,
+        DetectorError,
+        ParseError,
+    )
+
+    for cls in (APITimeoutError, APIAuthenticationError, APIRateLimitError, ParseError):
+        assert issubclass(cls, DetectorError), f"{cls} should be a subclass of DetectorError"
+
+
+def test_anthropic_provider_timeout_raises_api_timeout_error() -> None:
+    from promptgate.exceptions import APITimeoutError as ExpectedError
+
+    class APITimeoutError(Exception):  # mimic anthropic SDK exception name
+        pass
+
+    provider = AnthropicProvider(api_key="test-key", model="test-model")
+    mock_client = MagicMock()
+    mock_client.messages.create.side_effect = APITimeoutError("timeout")
+    provider._sync_client = mock_client
+
+    with pytest.raises(ExpectedError):
+        provider.complete("system", "user")
+
+
+def test_openai_provider_rate_limit_raises_api_rate_limit_error() -> None:
+    from promptgate.exceptions import APIRateLimitError
+
+    provider = OpenAIProvider(api_key="test-key", model="gpt-4o-mini")
+
+    class RateLimitError(Exception):
+        pass
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = RateLimitError("rate limited")
+    provider._sync_client = mock_client
+
+    with pytest.raises(APIRateLimitError):
+        provider.complete("system", "user")
+
+
+# ---------------------------------------------------------------------------
+# ParseError — llm_judge JSON 解析失敗
+# ---------------------------------------------------------------------------
+
+def test_llm_judge_parse_error_on_invalid_json() -> None:
+    from promptgate.exceptions import ParseError
+    from promptgate.detectors.llm_judge import LLMJudgeDetector
+
+    class _BadProvider(LLMProvider):
+        def complete(self, system: str, user_message: str) -> str:
+            return "this is not json at all"
+
+    detector = LLMJudgeDetector(provider=_BadProvider(), on_error="raise")
+    with pytest.raises(ParseError):
+        detector.scan("hello")
+
+
 def test_llm_judge_with_openai_provider() -> None:
     from promptgate.detectors.llm_judge import LLMJudgeDetector
 

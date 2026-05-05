@@ -3,6 +3,32 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 
+from promptgate.exceptions import (
+    APIAuthenticationError,
+    APIRateLimitError,
+    APITimeoutError,
+    DetectorError,
+)
+
+# Exception class names used to classify provider errors without importing
+# optional packages (anthropic / openai) at the base level.
+_TIMEOUT_NAMES = frozenset({"APITimeoutError", "TimeoutError", "ReadTimeout", "ConnectTimeout"})
+_AUTH_NAMES = frozenset({"AuthenticationError", "PermissionDeniedError"})
+_RATE_LIMIT_NAMES = frozenset({"RateLimitError"})
+
+
+def classify_provider_error(provider_name: str, exc: Exception) -> DetectorError:
+    """Convert a raw provider exception to the appropriate DetectorError subclass."""
+    cls_name = type(exc).__name__
+    msg = f"{provider_name} API call failed: {exc}."
+    if cls_name in _TIMEOUT_NAMES:
+        return APITimeoutError(msg)
+    if cls_name in _AUTH_NAMES:
+        return APIAuthenticationError(msg)
+    if cls_name in _RATE_LIMIT_NAMES:
+        return APIRateLimitError(msg)
+    return DetectorError(msg)
+
 
 class LLMProvider(ABC):
     """LLM API プロバイダーの抽象基底クラス。

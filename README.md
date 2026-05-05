@@ -60,6 +60,16 @@ of additional latency and API usage.
 
 > Before deploying `"llm_judge"` to production, define: latency budget, API cost ceiling, and failure behavior (`llm_on_error`).
 
+**Reference metrics on an independent holdout set** (80 samples not used in training; 40 attacks, 40 safe; bilingual English/Japanese):
+
+| Detector | Recall | Specificity | Precision | Accuracy |
+|----------|-------:|------------:|----------:|---------:|
+| Rule only | 0.0% | 100.0% | — | 50.0% |
+| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% |
+| Classifier v2 (threshold 0.5) | **92.5%** | **85.0%** | **86.0%** | **88.8%** |
+
+Full breakdown by attack category in [Evaluation results](#evaluation-results).
+
 ---
 
 ## Installation
@@ -420,7 +430,7 @@ gate = PromptGate(
     ],
     # Trusted users are scanned at a relaxed threshold (exact string match; no glob)
     trusted_user_ids=["admin-01", "ops-user"],
-    trusted_threshold=0.95,  # default: 0.95, higher than the standard block threshold
+    trusted_threshold=0.95,  # default: 0.95, independent of sensitivity setting
 )
 
 # Append a custom block rule at runtime
@@ -430,6 +440,27 @@ gate.add_rule(
     severity="high"   # "low" / "medium" / "high"
 )
 ```
+
+**Whitelist behavior**: Patterns matched by `whitelist_patterns` lower the rule detector's score for that input, but they do not override high-confidence detections. When `risk_score >= 0.8`, the input is blocked regardless of whitelist matches.
+
+**Trusted threshold**: `trusted_threshold` is evaluated independently of the `sensitivity` setting. It applies only when the `user_id` passed to `scan()` is in `trusted_user_ids`. The default of `0.95` means trusted users are blocked only when the risk score is extremely high.
+
+### Immediate block policy
+
+By default, any detection of `direct_injection` or `jailbreak` with a score above `0.85` triggers an immediate block (Tier 1), bypassing corroboration across other detectors. Both the threat set and the threshold are configurable:
+
+```python
+# Disable immediate blocking entirely — always use the full Tier 2/3 aggregation
+gate = PromptGate(immediate_block_threats=set())
+
+# Add credential_leak to immediate block targets (financial / healthcare apps)
+gate = PromptGate(
+    immediate_block_threats={"direct_injection", "jailbreak", "credential_leak"},
+    immediate_block_score=0.80,  # lower threshold for earlier blocking
+)
+```
+
+`immediate_block_threats` accepts any threat label. See `ScanResult.threats` for the full list.
 
 ### Logging
 
@@ -465,13 +496,48 @@ if not output_result.is_safe:
 ```python
 result = gate.scan(user_input)
 
-result.is_safe        # bool   — True if risk_score is below the sensitivity threshold
-result.risk_score     # float  — aggregate risk score in [0.0, 1.0]
-result.threats        # tuple  — detected threat category labels
-result.explanation    # str    — human-readable summary
-result.detector_used  # str    — scanner(s) that produced the result
-result.latency_ms     # float  — end-to-end scan latency in milliseconds
+result.is_safe        # bool  — True when risk_score < sensitivity threshold
+result.risk_score     # float — aggregate risk score in [0.0, 1.0]
+result.threats        # tuple — detected threat category labels
+result.explanation    # str   — human-readable summary
+result.detector_used  # str   — detector name(s) that produced the result
+result.latency_ms     # float — end-to-end scan latency in milliseconds
 ```
+
+#### `risk_score` calculation
+
+The score is computed in three tiers:
+
+1. **Immediate block** — if a critical threat (`direct_injection`, `jailbreak`) exceeds `immediate_block_score` (default `0.85`), the detector's raw score is returned immediately.
+2. **Severity-adjusted max** — each detector's score is multiplied by the highest threat-severity coefficient among its detected threats (`direct_injection`=1.0, `jailbreak`=0.95, `data_exfiltration`=0.85, `indirect_injection`=0.80, `prompt_leaking`=0.75). The maximum across all detectors becomes the base score.
+3. **Corroboration boost** — when two or more detectors independently detect the same threat type, `+0.08` per additional detector is added, capped at `+0.15`.
+
+#### `detector_used` values
+
+Detector names are joined with `+` in pipeline order:
+
+| Value | Meaning |
+|-------|---------|
+| `"rule"` | Rule-based scanner only |
+| `"rule+embedding"` | Rule + embedding |
+| `"rule+embedding+llm_judge"` | Full pipeline |
+| `"rule+classifier"` | Rule + classifier |
+| `""` | No detectors ran (e.g. empty input) |
+
+#### `threats` labels
+
+`direct_injection`, `jailbreak`, `data_exfiltration`, `indirect_injection`, `prompt_leaking`, `prompt_injection` (classifier binary label), `credential_leak`, `pii_leak`, `system_prompt_leak`.
+
+#### `explanation` format
+
+Format varies by detector and multiple detectors are joined with ` / `:
+
+| Detector | Example |
+|----------|---------|
+| `rule` | `"Threats detected: direct_injection (score=0.80)"` |
+| `embedding` | `"Embedding similarity 0.78 to exemplar …"` |
+| `classifier` | `"Attack probability: 0.91"` |
+| `llm_judge` | Free-form reason from the LLM |
 
 ---
 
@@ -569,16 +635,40 @@ gate = PromptGate(
 
 ### Evaluation results
 
-Reference results on 80 evaluation samples that were not used for training. The classifier threshold is `0.5`.
+Holdout: 80 samples not used for training or hard-data construction. Threshold `0.5` for all classifier rows.
 
-| Detector | Recall | Specificity | Precision | Accuracy |
-|----------|-------:|------------:|----------:|---------:|
-| Rule only | 0.0% | 100.0% | 0.0% | 50.0% |
-| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% |
-| Rule + embedding | 77.5% | 82.5% | 81.6% | 80.0% |
-| Classifier | 92.5% | 85.0% | 86.0% | 88.8% |
+**Composition**: 40 attacks (20 direct-injection + 20 paraphrase), 40 safe inputs (20 normal + 20 false-positive-prone), bilingual English/Japanese.
 
-The metrics mean the following:
+#### Overall comparison
+
+| Detector | Recall | Specificity | Precision | Accuracy | TP | FP | TN | FN |
+|----------|-------:|------------:|----------:|---------:|---:|---:|---:|---:|
+| Rule only | 0.0% | 100.0% | — | 50.0% | 0 | 0 | 40 | 40 |
+| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
+| Rule + embedding | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
+| **Classifier v2** | **92.5%** | **85.0%** | **86.0%** | **88.8%** | **37** | **6** | **34** | **3** |
+
+#### Classifier v2 — breakdown by input category
+
+| Category | Samples | TP | FN | Recall | TN | FP | Specificity |
+|----------|---------:|---:|---:|-------:|---:|---:|------------:|
+| Direct injection | 20 attack | 18 | 2 | 90.0% | — | — | — |
+| Paraphrase injection | 20 attack | 19 | 1 | 95.0% | — | — | — |
+| Safe (normal) | 20 safe | — | — | — | 19 | 1 | 95.0% |
+| Safe (false-positive-prone) | 20 safe | — | — | — | 15 | 5 | 75.0% |
+
+The false-positive-prone category includes inputs containing instruction-like phrasing (e.g. "please follow the new instructions") that are not attacks.
+
+#### Embedding only — breakdown by input category
+
+| Category | Samples | TP | FN | Recall | TN | FP | Specificity |
+|----------|---------:|---:|---:|-------:|---:|---:|------------:|
+| Direct injection | 20 attack | 18 | 2 | 90.0% | — | — | — |
+| Paraphrase injection | 20 attack | 13 | 7 | 65.0% | — | — | — |
+| Safe (normal) | 20 safe | — | — | — | 20 | 0 | 100.0% |
+| Safe (false-positive-prone) | 20 safe | — | — | — | 13 | 7 | 65.0% |
+
+#### Reading the metrics
 
 | Metric | Meaning | When it is high |
 |--------|---------|-----------------|
@@ -587,11 +677,9 @@ The metrics mean the following:
 | Precision | Percentage of inputs flagged as attacks that were actually attacks | Unsafe verdicts are more reliable |
 | Accuracy | Percentage of all inputs classified correctly as attack or safe | More overall correct decisions |
 
-If you want to miss as few attacks as possible, pay close attention to recall. If you do not want to block normal user input too often, specificity is also important. Precision shows how much you can trust an unsafe verdict. Accuracy is useful as a broad summary, but it should be read together with the other metrics because it depends on the balance of attack and safe samples.
+Classifier v2 achieves 92.5% recall while keeping specificity at 85.0% — it catches 37 of 40 attacks and passes 34 of 40 safe inputs. Embedding covers direct injections well (recall 90%) but drops to 65% recall on paraphrase attacks.
 
-In this evaluation, `classifier` scored higher than `embedding` on recall, specificity, precision, and accuracy. It is a good option when you want to detect more attacks while also reducing false blocks of safe input.
-
-These figures are reference values for the fixed evaluation data in this repository. Production accuracy depends on language, domain, input distribution, and attack diversity.
+These figures are reference values for the holdout data in this repository. Production accuracy depends on language, domain, input distribution, and attack diversity.
 
 ---
 
@@ -652,6 +740,10 @@ Input normalization (NFKC, zero-width character removal, dot/hyphen separator re
 ### Embedding-based detection (`"embedding"`)
 
 Embedding-based detection computes cosine similarity against a fixed set of attack exemplars. It is **not** a fine-tuned binary classifier. Generalization to attack expressions outside the exemplar distribution is not guaranteed. Identifying attack intent embedded in long or complex contexts is a known weakness.
+
+### Fine-tuned classifier (`"classifier"`)
+
+The bundled classifier model is trained on a curated dataset. Performance degrades for inputs that differ significantly from the training distribution. `classifier_max_length` (default `256`) is the tokenizer's `max_length`; inputs longer than this value are truncated before classification. For longer inputs, increase this value at the cost of higher inference latency.
 
 ### LLM-as-Judge (`"llm_judge"`)
 

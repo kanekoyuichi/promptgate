@@ -6,7 +6,7 @@ import time
 from typing import Optional
 
 from promptgate.detectors.base import BaseDetector
-from promptgate.exceptions import DetectorError
+from promptgate.exceptions import ConfigurationError, DetectorError
 from promptgate.result import ScanResult
 
 _DEFAULT_MODEL_ID = "kanekoyuichi/promptgate-classifier-v2"
@@ -46,7 +46,7 @@ class ClassifierDetector(BaseDetector):
         threshold: Optional[float] = None,
     ) -> None:
         if threshold is not None and not (0.0 < threshold <= 1.0):
-            raise DetectorError(
+            raise ConfigurationError(
                 "classifier threshold must be greater than 0.0 and at most 1.0."
             )
 

@@ -218,6 +218,80 @@ async def test_scan_batch_async_empty_list() -> None:
 
 
 # ---------------------------------------------------------------------------
+# scan_async — 検出器エラー時の再伝播（sync scan() と同じ挙動）
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_scan_async_embedding_error_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """embedding が失敗した場合、scan_async は例外を再伝播する（sync scan() と同じ挙動）。"""
+    import pytest as _pytest
+    from promptgate.detectors.embedding import EmbeddingDetector
+    from promptgate.exceptions import DetectorError
+
+    async def _raise(self: object, _text: str) -> None:
+        raise DetectorError("embedding model load failed.")
+
+    monkeypatch.setattr(EmbeddingDetector, "scan_async", _raise)
+
+    gate = PromptGate(detectors=["rule", "embedding"])
+    with _pytest.raises(DetectorError, match="embedding model load failed"):
+        await gate.scan_async("hello")
+
+
+@pytest.mark.asyncio
+async def test_scan_async_first_exception_is_raised_when_multiple_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """複数の検出器が失敗した場合、最初の例外を再伝播する。"""
+    import pytest as _pytest
+    from promptgate.detectors.embedding import EmbeddingDetector
+    from promptgate.detectors.llm_judge import LLMJudgeDetector
+    from promptgate.exceptions import DetectorError
+
+    async def _emb_raise(self: object, _text: str) -> None:
+        raise DetectorError("embedding failed.")
+
+    async def _llm_raise(self: object, _text: str) -> None:
+        raise DetectorError("llm failed.")
+
+    monkeypatch.setattr(EmbeddingDetector, "scan_async", _emb_raise)
+    monkeypatch.setattr(LLMJudgeDetector, "scan_async", _llm_raise)
+
+    provider = _MockProvider(_SAFE_RESPONSE)
+    gate = PromptGate(detectors=["rule", "embedding", "llm_judge"], llm_provider=provider)
+    with _pytest.raises(DetectorError):
+        await gate.scan_async("hello")
+
+
+@pytest.mark.asyncio
+async def test_scan_async_llm_judge_on_error_fail_open_does_not_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """llm_judge の on_error=fail_open 時は LLMJudgeDetector が内部処理して ScanResult を返す。
+    scan_async は例外を受け取らず正常に完了する。"""
+    from promptgate.providers.base import LLMProvider
+    from promptgate.exceptions import APITimeoutError
+
+    class _FailingProvider(LLMProvider):
+        def complete(self, system: str, user: str) -> str:
+            raise APITimeoutError("timeout")
+
+        async def complete_async(self, system: str, user: str) -> str:
+            raise APITimeoutError("timeout")
+
+    gate = PromptGate(
+        detectors=["rule", "llm_judge"],
+        llm_provider=_FailingProvider(),
+        llm_on_error="fail_open",
+    )
+    result = await gate.scan_async("hello")
+    # fail_open なので scan 自体は成功し、llm_judge は is_safe=True として扱われる
+    assert result is not None
+
+
+# ---------------------------------------------------------------------------
 # warmup
 # ---------------------------------------------------------------------------
 
