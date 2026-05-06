@@ -312,3 +312,60 @@ class TestCredentialLeakDetection:
         d = _output_detector()
         result = d.scan("Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9")
         assert "credential_leak" in result.threats
+
+
+# ---------------------------------------------------------------------------
+# P2-1: scan_output sanitize オプション
+# ---------------------------------------------------------------------------
+
+class TestScanOutputSanitize:
+    def test_sanitize_false_returns_none(self) -> None:
+        from promptgate import PromptGate
+        gate = PromptGate(detectors=["rule"])
+        result = gate.scan_output("Hello world", sanitize=False)
+        assert result.sanitized_text is None
+
+    def test_sanitize_default_is_false(self) -> None:
+        from promptgate import PromptGate
+        gate = PromptGate(detectors=["rule"])
+        result = gate.scan_output("Hello world")
+        assert result.sanitized_text is None
+
+    def test_sanitize_escapes_script_tag(self) -> None:
+        from promptgate import PromptGate
+        gate = PromptGate(detectors=["rule"])
+        result = gate.scan_output('<script>alert("xss")</script>', sanitize=True)
+        assert result.sanitized_text is not None
+        assert "<script>" not in result.sanitized_text
+        assert "&lt;script&gt;" in result.sanitized_text
+
+    def test_sanitize_escapes_html_entities(self) -> None:
+        from promptgate import PromptGate
+        gate = PromptGate(detectors=["rule"])
+        result = gate.scan_output('Click <a href="x" onclick="evil()">here</a>', sanitize=True)
+        assert result.sanitized_text is not None
+        assert "<a " not in result.sanitized_text
+        assert "&lt;a " in result.sanitized_text
+
+    def test_sanitize_safe_text_populated(self) -> None:
+        # is_safe=True でも sanitized_text は常に生成される
+        from promptgate import PromptGate
+        gate = PromptGate(detectors=["rule"])
+        text = "今日の天気は晴れです。"
+        result = gate.scan_output(text, sanitize=True)
+        assert result.is_safe is True
+        assert result.sanitized_text == text  # 特殊文字なしならそのまま
+
+    def test_sanitize_ampersand_escaped(self) -> None:
+        from promptgate import PromptGate
+        gate = PromptGate(detectors=["rule"])
+        result = gate.scan_output("A & B > C", sanitize=True)
+        assert result.sanitized_text == "A &amp; B &gt; C"
+
+    def test_sanitize_quote_escaped(self) -> None:
+        from promptgate import PromptGate
+        gate = PromptGate(detectors=["rule"])
+        result = gate.scan_output('say "hello"', sanitize=True)
+        assert result.sanitized_text is not None
+        assert '"' not in result.sanitized_text
+        assert "&quot;" in result.sanitized_text

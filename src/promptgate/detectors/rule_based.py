@@ -21,6 +21,7 @@ _SEVERITY_SCORE: dict[str, float] = {
     # 入力スキャン threat
     "direct_injection": 0.9,
     "jailbreak": 0.85,
+    "code_execution_induction": 0.85,
     "data_exfiltration": 0.8,
     "indirect_injection": 0.75,
     "prompt_leaking": 0.7,

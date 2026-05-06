@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -29,7 +29,8 @@ class ScanResult:
 
         threats:      Tuple of detected threat category labels, e.g.
                       ("direct_injection",), ("jailbreak", "data_exfiltration").
-                      Threat labels: direct_injection, jailbreak, data_exfiltration,
+                      Threat labels: direct_injection, jailbreak,
+                      code_execution_induction, data_exfiltration,
                       indirect_injection, prompt_leaking, prompt_injection (classifier
                       binary label), credential_leak, pii_leak, system_prompt_leak.
 
@@ -48,6 +49,12 @@ class ScanResult:
 
         latency_ms:   End-to-end scan latency in milliseconds, measured from the
                       start of scan() / scan_async() to the returned result.
+
+        sanitized_text: HTML-escaped version of the scanned text, populated only
+                      when ``scan_output(sanitize=True)`` is called.  ``None``
+                      otherwise.  Use this field instead of the raw LLM output
+                      when rendering responses in a browser context to prevent XSS.
+                      Escapes ``&``, ``<``, ``>``, and ``"`` via ``html.escape()``.
     """
 
     is_safe: bool
@@ -56,6 +63,7 @@ class ScanResult:
     explanation: str = ""
     detector_used: str = ""
     latency_ms: float = 0.0
+    sanitized_text: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.threats, tuple):

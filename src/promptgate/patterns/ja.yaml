@@ -33,6 +33,23 @@ indirect_injection:
   - "\\[INST\\]"
   - "<instructions>"
   - "\\{\\{"
+  # Closing tags used to escape XML wrapper defenses (e.g. </user_input>, </human>)
+  - "</system>"
+  - "</instructions>"
+  - "</(?:user[-_]?input|human|query|prompt|assistant)>"
+  - "]]>"
+
+code_execution_induction:
+  - "__import__\\s*\\("
+  - "\\bexec\\s*\\("
+  - "\\beval\\s*\\("
+  - "subprocess\\.(?:run|call|Popen|check_output)\\s*\\("
+  - "os\\.(?:system|popen|execvp?)\\s*\\("
+  - "';\\s*DROP\\s+TABLE"
+  - "';\\s*DELETE\\s+FROM"
+  - "\\bUNION\\s+(?:ALL\\s+)?SELECT\\b"
+  - ";\\s*rm\\s+-[rf]"
+  - ";\\s*(?:curl|wget)\\s"
 
 prompt_leaking:
   - "最初の指示を繰り返して"

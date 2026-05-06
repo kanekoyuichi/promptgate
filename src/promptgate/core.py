@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import html
 import logging
+import re
 import time
 import uuid
-from typing import FrozenSet, Optional, cast
+from typing import Any, FrozenSet, Optional, cast
 
 from promptgate.detectors.classifier import ClassifierDetector
 from promptgate.detectors.embedding import EmbeddingDetector
@@ -22,6 +24,7 @@ logger = logging.getLogger(__name__)
 _VALID_SENSITIVITIES = {"low", "medium", "high"}
 _VALID_DETECTORS = {"rule", "embedding", "classifier", "llm_judge"}
 _VALID_LANGUAGES = {"ja", "en", "auto"}
+_VALID_SOURCES = {"user", "external_document", "tool_result", "stored_content"}
 
 _SENSITIVITY_THRESHOLD: dict[str, float] = {
     "low": 0.8,
@@ -40,12 +43,13 @@ _DEFAULT_IMMEDIATE_BLOCK_THREATS: FrozenSet[str] = frozenset(
 # 係数が高い threat (direct_injection) は確信度をそのまま維持する。
 _THREAT_SEVERITY: dict[str, float] = {
     # 入力 threat: 攻撃者がLLMに送る悪意のある指示
-    "direct_injection": 1.00,   # システムプロンプト上書き: 最重大
-    "jailbreak": 0.95,          # 安全制約回避: 重大
-    "data_exfiltration": 0.85,  # 情報漏洩誘導: 高
-    "indirect_injection": 0.80, # 外部データ経由攻撃: 中高
-    "prompt_leaking": 0.75,     # 内部プロンプト盗取: 中
-    "prompt_injection": 1.00,   # classifier の二値 unsafe 判定
+    "direct_injection": 1.00,          # システムプロンプト上書き: 最重大
+    "jailbreak": 0.95,                 # 安全制約回避: 重大
+    "code_execution_induction": 0.90,  # コード実行誘導: 重大
+    "data_exfiltration": 0.85,         # 情報漏洩誘導: 高
+    "indirect_injection": 0.80,        # 外部データ経由攻撃: 中高
+    "prompt_leaking": 0.75,            # 内部プロンプト盗取: 中
+    "prompt_injection": 1.00,          # classifier の二値 unsafe 判定
     # 出力 threat: LLMが生成した応答に含まれる危険なコンテンツ
     "credential_leak": 1.00,    # APIキー・パスワード露出: 最重大
     "pii_leak": 0.90,           # 個人情報露出: 重大
@@ -53,11 +57,59 @@ _THREAT_SEVERITY: dict[str, float] = {
 }
 _DEFAULT_THREAT_SEVERITY: float = 0.80  # 未知の threat タイプへのフォールバック
 
+# indirect_injection の深刻度係数はソース種別によって上書きする。
+# 外部データ（RAG・ツール結果・保存コンテンツ）はユーザー入力より
+# 攻撃プロンプトを運ぶリスクが高いため、係数を引き上げる。
+_INDIRECT_INJECTION_SEVERITY_BY_SOURCE: dict[str, float] = {
+    "user":              0.80,  # デフォルト（_THREAT_SEVERITY と同値）
+    "external_document": 1.00,  # RAG・Web取得ドキュメント: 最重大
+    "tool_result":       1.00,  # ツール・API・シェルの返り値: 最重大
+    "stored_content":    0.95,  # DB・ファイル読み込み: 重大
+}
+
 # Tier 3: 同一 threat の複数検出器コロボレーションブースト
 # 「同じ threat を N 個の検出器が独立に検出した」場合のみブーストを加算する。
 # 異なる threat を別々の検出器が検出しても偶然の一致と見なしブーストしない。
 _SAME_THREAT_BOOST: float = 0.08       # 同一 threat を検出した追加検出器 1 つあたり
 _CORROBORATION_MAX_BOOST: float = 0.15  # コロボレーションブーストの上限
+
+
+def _extract_argument_strings(arguments: dict[str, Any]) -> list[str]:
+    """Recursively extract all string leaf values from a tool call arguments dict."""
+    strings: list[str] = []
+    stack: list[object] = [arguments]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            strings.append(item)
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return strings
+
+
+def _merge_xml_wrapper_escape(
+    rule_result: ScanResult, text: str, tag: str
+) -> ScanResult:
+    """Merge indirect_injection into rule_result if text contains a closing XML wrapper tag.
+
+    XML tagging is a common defense that wraps user input in a tag like <user_input>.
+    Attackers can escape this wrapper by including </user_input> in their input.
+    This function detects that escape attempt and adds it to the rule-based result.
+    """
+    if not re.search(f"</{re.escape(tag)}\\s*>", text, re.IGNORECASE):
+        return rule_result
+    new_threats = tuple(set(rule_result.threats) | {"indirect_injection"})
+    new_score = max(rule_result.risk_score, 0.75)
+    append = f"XML wrapper escape: </{tag}>"
+    new_expl = f"{rule_result.explanation} / {append}" if rule_result.explanation else append
+    return dataclasses.replace(
+        rule_result,
+        threats=new_threats,
+        risk_score=round(new_score, 4),
+        explanation=new_expl,
+    )
 
 
 class PromptGate:
@@ -250,7 +302,31 @@ class PromptGate:
         text: str,
         user_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        xml_wrapper_tag: Optional[str] = None,
+        source: str = "user",
     ) -> ScanResult:
+        """スキャンを実行する。
+
+        Args:
+            text:            スキャン対象テキスト。
+            user_id:         ユーザー ID（trusted_user_ids と照合する）。
+            trace_id:        監査ログ追跡 ID（省略時は自動生成）。
+            xml_wrapper_tag: XMLタギング防御で使用しているラッパータグ名。
+                             指定した場合、そのタグの閉じ形式（例: ``</user_input>``）が
+                             テキストに含まれていると indirect_injection として検出する。
+                             例: ``xml_wrapper_tag="user_input"``
+            source:          入力テキストのソース種別。
+                             ``"user"`` （デフォルト）: エンドユーザーからの直接入力。
+                             ``"external_document"`` : RAG・Web取得ドキュメント。
+                             ``"tool_result"`` : ツール・API・シェルの返り値。
+                             ``"stored_content"`` : DB・ファイルから読み込んだテキスト。
+                             ``"user"`` 以外を指定すると ``indirect_injection`` の深刻度係数が
+                             引き上げられ、間接インジェクション攻撃の検出感度が上がる。
+        """
+        if source not in _VALID_SOURCES:
+            raise ConfigurationError(
+                f"Invalid source: {source!r}. Must be one of {sorted(_VALID_SOURCES)}."
+            )
         start = time.monotonic()
         if trace_id is None:
             trace_id = uuid.uuid4().hex[:16]
@@ -259,6 +335,8 @@ class PromptGate:
         per_detector: list[tuple[str, ScanResult]] = []
 
         rule_result = self._rule_detector.scan(text)
+        if xml_wrapper_tag is not None:
+            rule_result = _merge_xml_wrapper_escape(rule_result, text, xml_wrapper_tag)
         per_detector.append(("rule", rule_result))
 
         if self._embedding_detector and self._sensitivity in ("medium", "high"):
@@ -273,7 +351,7 @@ class PromptGate:
             llm_result = self._llm_detector.scan(text)
             per_detector.append(("llm_judge", llm_result))
 
-        final = self._aggregate(per_detector, is_trusted=is_trusted)
+        final = self._aggregate(per_detector, is_trusted=is_trusted, source=source)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
 
         self._emit_audit_log(
@@ -284,6 +362,7 @@ class PromptGate:
             is_trusted=is_trusted,
             per_detector=per_detector,
             final=final,
+            source=source,
         )
         return final
 
@@ -291,6 +370,7 @@ class PromptGate:
         self,
         text: str,
         trace_id: Optional[str] = None,
+        sanitize: bool = False,
     ) -> ScanResult:
         """LLMの出力テキストをスキャンする。
 
@@ -301,6 +381,13 @@ class PromptGate:
         - trusted_user_ids による閾値緩和は行わない（出力は常に厳格に検査する）
         - 埋め込み検出器はスキップ（出力の意味類似度判定は適合度が低い）
         - LLMジャッジ検出器は実行する（文脈を踏まえた情報漏洩判定に有効）
+
+        Args:
+            text:     スキャン対象のLLM出力テキスト。
+            trace_id: 監査ログ追跡 ID（省略時は自動生成）。
+            sanitize: ``True`` の場合、``ScanResult.sanitized_text`` に
+                      ``html.escape()`` 適用済みテキストを格納する。
+                      ブラウザへの出力に LLM レスポンスを直接レンダリングする場合に使用する。
         """
         start = time.monotonic()
         if trace_id is None:
@@ -317,7 +404,11 @@ class PromptGate:
             per_detector.append(("llm_judge", llm_result))
 
         final = self._aggregate(per_detector, is_trusted=False)
-        final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
+        final = dataclasses.replace(
+            final,
+            latency_ms=(time.monotonic() - start) * 1000,
+            sanitized_text=html.escape(text) if sanitize else None,
+        )
 
         self._emit_audit_log(
             scan_type="output",
@@ -330,6 +421,66 @@ class PromptGate:
         )
         return final
 
+    def scan_stored(
+        self,
+        text: str,
+        user_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        xml_wrapper_tag: Optional[str] = None,
+    ) -> ScanResult:
+        """DB・ファイル等の永続ストレージから読み込んだテキストをスキャンする。
+
+        ``scan(text, source="stored_content")`` の短縮形。
+        ストアドインジェクション（DB に保存済みの悪意ある命令）の検出を意図する。
+        """
+        return self.scan(
+            text,
+            user_id=user_id,
+            trace_id=trace_id,
+            xml_wrapper_tag=xml_wrapper_tag,
+            source="stored_content",
+        )
+
+    def scan_tool_call(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        user_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> ScanResult:
+        """LLM が生成したツール呼び出し引数をスキャンする。
+
+        ``arguments`` dict に含まれるすべての文字列値（ネスト含む）を
+        連結してスキャンする。コマンドインジェクション・SQLインジェクション等、
+        ツール引数に紛れ込んだ悪意ある内容を検出する。
+
+        ``trace_id`` を省略した場合、``"tool:<tool_name>:<uuid>"`` の形式で自動生成する。
+        ``source="tool_result"`` で固定されるため、``indirect_injection`` の重みが
+        最大（1.0）に引き上げられる。
+
+        Args:
+            tool_name:  ツール名（ログ追跡に使用）。
+            arguments:  LLM が生成したツール呼び出し引数の dict。
+            user_id:    ユーザー ID（trusted_user_ids と照合する）。
+            trace_id:   監査ログ追跡 ID（省略時は自動生成）。
+
+        Example::
+
+            result = gate.scan_tool_call(
+                "run_sql",
+                {"query": "SELECT * FROM users WHERE id=1; DROP TABLE users;--"},
+            )
+            if not result.is_safe:
+                raise ValueError(f"Unsafe tool arguments: {result.threats}")
+        """
+        if trace_id is None:
+            trace_id = f"tool:{tool_name}:{uuid.uuid4().hex[:12]}"
+        strings = _extract_argument_strings(arguments)
+        if not strings:
+            return ScanResult(is_safe=True, risk_score=0.0, detector_used="")
+        text = "\n".join(strings)
+        return self.scan(text, user_id=user_id, trace_id=trace_id, source="tool_result")
+
     # ------------------------------------------------------------------
     # 非同期 API
     # ------------------------------------------------------------------
@@ -339,6 +490,8 @@ class PromptGate:
         text: str,
         user_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        xml_wrapper_tag: Optional[str] = None,
+        source: str = "user",
     ) -> ScanResult:
         """非同期スキャン。FastAPI / ASGI アプリでイベントループをブロックしない。
 
@@ -367,14 +520,21 @@ class PromptGate:
         # event loop's default executor prevents lingering worker threads in
         # pytest-asyncio and short-lived ASGI test processes.
         rule_result = self._rule_detector.scan(text)
+        if xml_wrapper_tag is not None:
+            rule_result = _merge_xml_wrapper_escape(rule_result, text, xml_wrapper_tag)
         per_detector.append(("rule", rule_result))
+
+        if source not in _VALID_SOURCES:
+            raise ConfigurationError(
+                f"Invalid source: {source!r}. Must be one of {sorted(_VALID_SOURCES)}."
+            )
 
         # rule が即時ブロック条件を満たした場合、embedding / llm タスクを起動しない。
         # 同期版 scan() と同じ early exit 挙動にすることで API コストを抑える。
         if not is_trusted:
             triggered = set(rule_result.threats) & self._immediate_block_threats
             if triggered and rule_result.risk_score >= self._immediate_block_score:
-                final = self._aggregate(per_detector, is_trusted=is_trusted)
+                final = self._aggregate(per_detector, is_trusted=is_trusted, source=source)
                 final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
                 self._emit_audit_log(
                     scan_type="input",
@@ -384,6 +544,7 @@ class PromptGate:
                     is_trusted=is_trusted,
                     per_detector=per_detector,
                     final=final,
+                    source=source,
                 )
                 return final
 
@@ -423,7 +584,7 @@ class PromptGate:
             if first_exc is not None:
                 raise first_exc
 
-        final = self._aggregate(per_detector, is_trusted=is_trusted)
+        final = self._aggregate(per_detector, is_trusted=is_trusted, source=source)
         final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
 
         self._emit_audit_log(
@@ -434,6 +595,7 @@ class PromptGate:
             is_trusted=is_trusted,
             per_detector=per_detector,
             final=final,
+            source=source,
         )
         return final
 
@@ -441,6 +603,7 @@ class PromptGate:
         self,
         text: str,
         trace_id: Optional[str] = None,
+        sanitize: bool = False,
     ) -> ScanResult:
         """非同期出力スキャン。scan_output() の非同期版。"""
         start = time.monotonic()
@@ -459,7 +622,11 @@ class PromptGate:
             per_detector.append(("llm_judge", llm_result))
 
         final = self._aggregate(per_detector, is_trusted=False)
-        final = dataclasses.replace(final, latency_ms=(time.monotonic() - start) * 1000)
+        final = dataclasses.replace(
+            final,
+            latency_ms=(time.monotonic() - start) * 1000,
+            sanitized_text=html.escape(text) if sanitize else None,
+        )
 
         self._emit_audit_log(
             scan_type="output",
@@ -472,6 +639,40 @@ class PromptGate:
         )
         return final
 
+    async def scan_stored_async(
+        self,
+        text: str,
+        user_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        xml_wrapper_tag: Optional[str] = None,
+    ) -> ScanResult:
+        """scan_stored() の非同期版。"""
+        return await self.scan_async(
+            text,
+            user_id=user_id,
+            trace_id=trace_id,
+            xml_wrapper_tag=xml_wrapper_tag,
+            source="stored_content",
+        )
+
+    async def scan_tool_call_async(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        user_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> ScanResult:
+        """scan_tool_call() の非同期版。"""
+        if trace_id is None:
+            trace_id = f"tool:{tool_name}:{uuid.uuid4().hex[:12]}"
+        strings = _extract_argument_strings(arguments)
+        if not strings:
+            return ScanResult(is_safe=True, risk_score=0.0, detector_used="")
+        text = "\n".join(strings)
+        return await self.scan_async(
+            text, user_id=user_id, trace_id=trace_id, source="tool_result"
+        )
+
     # ------------------------------------------------------------------
     # バッチ API
     # ------------------------------------------------------------------
@@ -482,6 +683,7 @@ class PromptGate:
         user_id: Optional[str] = None,
         trace_id_prefix: Optional[str] = None,
         max_concurrency: int = 10,
+        source: str = "user",
     ) -> list[ScanResult]:
         """複数テキストを並行スキャンする。
 
@@ -495,17 +697,18 @@ class PromptGate:
                               "{prefix}-{index}" の形式でトレース ID が生成される。
             max_concurrency:  同時実行するスキャン数の上限（デフォルト: 10）。
                               llm_judge 有効時は API レート制限を考慮して調整すること。
+            source:           全テキストに共通のソース種別（``scan()`` の ``source`` 参照）。
+                              RAG チャンクを一括スキャンする場合は ``"external_document"`` を指定する。
 
         Returns:
             texts と同じ順序の ScanResult リスト。
 
         Example::
 
-            results = await gate.scan_batch_async([
-                "ユーザー入力1",
-                "ユーザー入力2",
-                "ユーザー入力3",
-            ])
+            results = await gate.scan_batch_async(
+                rag_chunks,
+                source="external_document",
+            )
             blocked = [r for r in results if not r.is_safe]
         """
         def _make_trace_id(i: int) -> Optional[str]:
@@ -518,7 +721,7 @@ class PromptGate:
         async def _scan_with_sem(text: str, i: int) -> ScanResult:
             async with sem:
                 return await self.scan_async(
-                    text, user_id=user_id, trace_id=_make_trace_id(i)
+                    text, user_id=user_id, trace_id=_make_trace_id(i), source=source
                 )
 
         results: list[ScanResult] = list(
@@ -540,6 +743,7 @@ class PromptGate:
         is_trusted: bool,
         per_detector: list[tuple[str, ScanResult]],
         final: ScanResult,
+        source: str = "user",
     ) -> None:
         """構造化監査ログを出力する。
 
@@ -551,6 +755,7 @@ class PromptGate:
             trace_id        リクエスト追跡 ID（未指定時は自動生成 UUID）
             tenant_id       テナント識別子（PromptGate 初期化時に設定）
             scan_type       "input" または "output"
+            source          入力ソース種別 ("user" / "external_document" / "tool_result" / "stored_content")
             input_hash      入力テキストの SHA-256 先頭 16 桁（相関追跡用）
             input_length    入力テキストの文字数
             user_id         スキャン対象ユーザー ID（scan() に渡された値）
@@ -581,6 +786,7 @@ class PromptGate:
             "trace_id": trace_id,
             "tenant_id": self._tenant_id,
             "scan_type": scan_type,
+            "source": source,
             "input_hash": input_hash,
             "input_length": len(text),
             "user_id": user_id,
@@ -611,6 +817,7 @@ class PromptGate:
         self,
         results: list[tuple[str, ScanResult]],
         is_trusted: bool = False,
+        source: str = "user",
     ) -> ScanResult:
         if not results:
             return ScanResult(is_safe=True, risk_score=0.0)
@@ -657,10 +864,13 @@ class PromptGate:
         def _severity_adjusted(result: ScanResult) -> float:
             if not result.threats:
                 return result.risk_score
-            max_sev = max(
-                _THREAT_SEVERITY.get(t, _DEFAULT_THREAT_SEVERITY)
-                for t in result.threats
-            )
+            def _sev(threat: str) -> float:
+                if threat == "indirect_injection":
+                    return _INDIRECT_INJECTION_SEVERITY_BY_SOURCE.get(
+                        source, _THREAT_SEVERITY["indirect_injection"]
+                    )
+                return _THREAT_SEVERITY.get(threat, _DEFAULT_THREAT_SEVERITY)
+            max_sev = max(_sev(t) for t in result.threats)
             return result.risk_score * max_sev
 
         base_score = max(_severity_adjusted(r) for _, r in results)
