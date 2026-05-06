@@ -60,13 +60,13 @@ of additional latency and API usage.
 
 > Before deploying `"llm_judge"` to production, define: latency budget, API cost ceiling, and failure behavior (`llm_on_error`).
 
-**Reference metrics on an independent holdout set** (80 samples not used in training; 40 attacks, 40 safe; bilingual English/Japanese):
+**Reference metrics on an independent holdout set** (200 samples not used in training; 100 attacks, 100 safe; bilingual English/Japanese):
 
 | Detector | Recall | Specificity | Precision | Accuracy |
 |----------|-------:|------------:|----------:|---------:|
-| Rule only | 0.0% | 100.0% | — | 50.0% |
-| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% |
-| Classifier v2 (threshold 0.5) | **92.5%** | **85.0%** | **86.0%** | **88.8%** |
+| Rule only | 5.0% | 97.0% | 62.5% | 51.0% |
+| Embedding only | 74.0% | 81.0% | 79.6% | 77.5% |
+| Classifier v2 (threshold 0.5) | **92.0%** | **82.0%** | **83.6%** | **87.0%** |
 
 Full breakdown by attack category in [Evaluation results](#evaluation-results).
 
@@ -708,27 +708,27 @@ gate = PromptGate(
 
 ### Evaluation results
 
-Holdout: 80 samples not used for training or hard-data construction. Threshold `0.5` for all classifier rows.
+Holdout: 200 samples not used for training or hard-data construction. Threshold `0.5` for all classifier rows.
 
-**Composition**: 40 attacks (20 direct-injection + 20 paraphrase), 40 safe inputs (20 normal + 20 false-positive-prone), bilingual English/Japanese.
+**Composition**: 100 attacks (50 direct-injection + 50 paraphrase), 100 safe inputs (50 normal + 50 false-positive-prone), bilingual English/Japanese.
 
 #### Overall comparison
 
 | Detector | Recall | Specificity | Precision | Accuracy | TP | FP | TN | FN |
 |----------|-------:|------------:|----------:|---------:|---:|---:|---:|---:|
-| Rule only | 0.0% | 100.0% | — | 50.0% | 0 | 0 | 40 | 40 |
-| Embedding only | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
-| Rule + embedding | 77.5% | 82.5% | 81.6% | 80.0% | 31 | 7 | 33 | 9 |
-| **Classifier v2** | **92.5%** | **85.0%** | **86.0%** | **88.8%** | **37** | **6** | **34** | **3** |
+| Rule only | 5.0% | 97.0% | 62.5% | 51.0% | 5 | 3 | 97 | 95 |
+| Embedding only | 74.0% | 81.0% | 79.6% | 77.5% | 74 | 19 | 81 | 26 |
+| Rule + embedding | 74.0% | 81.0% | 79.6% | 77.5% | 74 | 19 | 81 | 26 |
+| **Classifier v2** | **92.0%** | **82.0%** | **83.6%** | **87.0%** | **92** | **18** | **82** | **8** |
 
 #### Classifier v2 — breakdown by input category
 
 | Category | Samples | TP | FN | Recall | TN | FP | Specificity |
 |----------|---------:|---:|---:|-------:|---:|---:|------------:|
-| Direct injection | 20 attack | 18 | 2 | 90.0% | — | — | — |
-| Paraphrase injection | 20 attack | 19 | 1 | 95.0% | — | — | — |
-| Safe (normal) | 20 safe | — | — | — | 19 | 1 | 95.0% |
-| Safe (false-positive-prone) | 20 safe | — | — | — | 15 | 5 | 75.0% |
+| Direct injection | 50 attack | 47 | 3 | 94.0% | — | — | — |
+| Paraphrase injection | 50 attack | 45 | 5 | 90.0% | — | — | — |
+| Safe (normal) | 50 safe | — | — | — | 47 | 3 | 94.0% |
+| Safe (false-positive-prone) | 50 safe | — | — | — | 35 | 15 | 70.0% |
 
 The false-positive-prone category includes inputs containing instruction-like phrasing (e.g. "please follow the new instructions") that are not attacks.
 
@@ -736,10 +736,10 @@ The false-positive-prone category includes inputs containing instruction-like ph
 
 | Category | Samples | TP | FN | Recall | TN | FP | Specificity |
 |----------|---------:|---:|---:|-------:|---:|---:|------------:|
-| Direct injection | 20 attack | 18 | 2 | 90.0% | — | — | — |
-| Paraphrase injection | 20 attack | 13 | 7 | 65.0% | — | — | — |
-| Safe (normal) | 20 safe | — | — | — | 20 | 0 | 100.0% |
-| Safe (false-positive-prone) | 20 safe | — | — | — | 13 | 7 | 65.0% |
+| Direct injection | 50 attack | 44 | 6 | 88.0% | — | — | — |
+| Paraphrase injection | 50 attack | 30 | 20 | 60.0% | — | — | — |
+| Safe (normal) | 50 safe | — | — | — | 48 | 2 | 96.0% |
+| Safe (false-positive-prone) | 50 safe | — | — | — | 33 | 17 | 66.0% |
 
 #### Reading the metrics
 
@@ -750,7 +750,7 @@ The false-positive-prone category includes inputs containing instruction-like ph
 | Precision | Percentage of inputs flagged as attacks that were actually attacks | Unsafe verdicts are more reliable |
 | Accuracy | Percentage of all inputs classified correctly as attack or safe | More overall correct decisions |
 
-Classifier v2 achieves 92.5% recall while keeping specificity at 85.0% — it catches 37 of 40 attacks and passes 34 of 40 safe inputs. Embedding covers direct injections well (recall 90%) but drops to 65% recall on paraphrase attacks.
+Classifier v2 achieves 92.0% recall while keeping specificity at 82.0% — it catches 92 of 100 attacks and passes 82 of 100 safe inputs. Embedding covers direct injections (recall 88%) but drops to 60% recall on paraphrase attacks.
 
 These figures are reference values for the holdout data in this repository. Production accuracy depends on language, domain, input distribution, and attack diversity.
 
